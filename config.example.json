@@ -12,5 +12,6 @@
     "all:%22robot+manipulation%22"
   ],
   "use_claude_cli": true,
-  "claude_bin": ""
+  "claude_bin": "",
+  "open_digest": true
 }

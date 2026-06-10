@@ -15,7 +15,7 @@
   - Detailed Chinese summary (problem / method / novelty / results / value)
   - Key points list + direction tags
 - 💻 **Code links**: auto-extract the GitHub repo from the abstract or Papers with Code, otherwise honestly mark 'none'
-- 📲 **Delivered to iPhone + Mac**: each of the Top 5 gets its own detailed post (Bark), Mac shows one summary notification, and a local Markdown archive is kept
+- 📲 **Delivered to iPhone + Mac**: each of the Top 5 papers is pushed as a separate detailed commentary (Bark); Mac shows one summary notification and automatically opens the daily digest Markdown with all 5 papers, while the full text is archived locally
 - ⏰ **Scheduled and unattended**: macOS `launchd` runs it automatically at 9:30 daily, **no need for the terminal to be open**
 - 🛟 **Graceful degradation**: falls back to English abstracts + keyword tags when the `claude` CLI is unavailable
 
@@ -56,6 +56,7 @@ In Claude Code you can also type `/embodied-daily` to trigger it or debug by han
 | `queries` | Array of arXiv search queries | See file |
 | `use_claude_cli` | whether to use the `claude` CLI for Chinese summaries | `true` |
 | `claude_bin` | Path to the claude executable (auto-detected if empty) | `""` |
+| `open_digest` | Whether to automatically open the daily digest `latest.md` with the default app after running (Mac) | `true` |
 
 > 💡 **Personalization example**: set `interests` to `"VLA, dexterous hand manipulation, world models"` and the daily Top5 will lean toward these directions.
 

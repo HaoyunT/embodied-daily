@@ -41,7 +41,8 @@ DEFAULT_CONFIG = {
         "all:%22robot+manipulation%22"
     ],
     "use_claude_cli": True,               # use local claude CLI for Chinese summaries; false = English only
-    "claude_bin": ""                      # Leave empty to auto-detect; an absolute path such as /Users/xxx/.local/bin/claude also works
+    "claude_bin": "",                     # leave empty to auto-detect; an absolute path also works, e.g. /Users/xxx/.local/bin/claude
+    "open_digest": True                   # automatically open the day's digest latest.md with the default app after the run (Mac)
 }
 
 
@@ -452,6 +453,12 @@ def main():
     notify_macos("📚 Today Embodied AI Top%d - %s" % (len(items), date_str),
                  " / ".join(dict.fromkeys(it["tag"] for it in items)),
                  titles)
+    # Open today's digest with the default program (clicking the native Mac notification does nothing, so this is a fallback)
+    if cfg.get("open_digest", True):
+        try:
+            subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
+        except Exception as e:
+            log("Failed to open digest:", e)
     log("Done")
 
 
