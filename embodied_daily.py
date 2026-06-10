@@ -188,10 +188,20 @@ def claude_curate(cfg, candidates):
     for i, p in enumerate(candidates):
         abs = p["summary"][:1100]
         listing.append("[%d] 标题: %s\n摘要: %s" % (i, p["title"], abs))
-    prompt = (
+    # 可选: 读者兴趣偏好(来自 config.json 的 interests), 用于影响精选与排序
+    interests = str(cfg.get("interests", "")).strip()
+    interest_line = ""
+    if interests:
+        interest_line = (
+            "【读者偏好】我个人重点关注: %s。与这些方向相关的论文请优先选入、"
+            "并排在更靠前的位置; 但若当天有明显更重要的其他具身工作, 仍可纳入。\n" % interests
+        )
+    head = (
         "你是具身智能(Embodied AI)方向的资深科研助理。下面是若干篇 arXiv 论文候选。\n"
         "请从中挑选与【具身智能】最相关、最有价值的 %d 篇(涵盖如 VLA、机器人操作/抓取、"
-        "导航、人形机器人、灵巧手、sim-to-real、世界模型、强化学习控制 等)。\n"
+        "导航、人形机器人、灵巧手、sim-to-real、世界模型、强化学习控制 等)。\n" % cfg["top_n"]
+    )
+    body = (
         "对每篇产出详细的中文解读, 包含以下字段:\n"
         "- tag: 简短中文方向标签(如 VLA / 灵巧手 / 世界模型)\n"
         "- tldr: 一句话亮点(20-30字, 让人一眼知道这篇牛在哪)\n"
@@ -203,8 +213,9 @@ def claude_curate(cfg, candidates):
         "格式: [{\"idx\": 候选编号(整数), \"tag\": \"...\", \"tldr\": \"...\", "
         "\"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
         "按重要性从高到低排序, 恰好 %d 个元素。\n\n候选列表:\n%s"
-        % (cfg["top_n"], cfg["top_n"], "\n\n".join(listing))
+        % (cfg["top_n"], "\n\n".join(listing))
     )
+    prompt = head + interest_line + body
     try:
         log("调用 claude CLI 生成中文摘要 (可能需要 1-2 分钟)...")
         proc = subprocess.run(

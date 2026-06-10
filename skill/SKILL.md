@@ -32,6 +32,7 @@ cat ~/embodied-daily/archive/2026-06-10.md
 ### 4. 调整配置
 编辑 `~/embodied-daily/config.json`：
 - `bark_key`: iPhone Bark 推送 key（**首次使用必须填**）
+- `interests`: 个人兴趣偏好（如 "VLA, 灵巧手"），相关论文会被优先选入并排前面
 - `top_n`: 每天篇数（默认 5）
 - `lookback_days`: 抓取最近几天（默认 3）
 - `queries`: arXiv 检索式数组
