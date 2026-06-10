@@ -15,7 +15,7 @@
   - 详细中文摘要（问题 / 方法 / 创新点 / 结果 / 价值）
   - 关键要点列表 + 方向标签
 - 💻 **代码链接**：自动从摘要 / Papers with Code 抽取 GitHub 仓库，没有则如实标「暂无」
-- 📲 **送达 iPhone + Mac**：Top5 每篇单独推送一条详细解读（Bark），Mac 弹一条汇总通知，并本地 Markdown 存档
+- 📲 **送达 iPhone + Mac**：Top5 每篇单独推送一条详细解读（Bark）；Mac 弹一条汇总通知，并自动打开含全部 5 篇的日报 Markdown，全文同时本地存档
 - ⏰ **定时无人值守**：macOS `launchd` 每天 9:30 自动运行，**不依赖终端是否打开**
 - 🛟 **优雅降级**：`claude` CLI 不可用时自动退化为英文摘要 + 关键词标签
 
@@ -56,6 +56,7 @@ cat archive/$(date +%F).md           # 查看今天的日报
 | `queries` | arXiv 检索式数组 | 见文件 |
 | `use_claude_cli` | 是否用 `claude` CLI 做中文摘要 | `true` |
 | `claude_bin` | claude 可执行文件路径（留空自动探测） | `""` |
+| `open_digest` | 跑完后是否自动用默认程序打开当天日报 `latest.md`（Mac） | `true` |
 
 > 💡 **个人化例子**：把 `interests` 设成 `"VLA, 灵巧手操作, 世界模型"`，每天的 Top5 就会更偏向这些方向。
 

@@ -41,7 +41,8 @@ DEFAULT_CONFIG = {
         "all:%22robot+manipulation%22"
     ],
     "use_claude_cli": True,               # 用本机 claude CLI 做中文摘要; false 则只给英文摘要
-    "claude_bin": ""                      # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
+    "claude_bin": "",                     # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
+    "open_digest": True                   # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
 }
 
 
@@ -452,6 +453,12 @@ def main():
     notify_macos("📚 今日具身智能 Top%d · %s" % (len(items), date_str),
                  " / ".join(dict.fromkeys(it["tag"] for it in items)),
                  titles)
+    # 自动用默认程序打开当天日报 (Mac 原生通知点击无动作, 用这个兜底)
+    if cfg.get("open_digest", True):
+        try:
+            subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
+        except Exception as e:
+            log("打开日报失败:", e)
     log("完成")
 
 
