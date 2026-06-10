@@ -1,8 +1,10 @@
 {
   "bark_key": "在这里填入你的 Bark key（iPhone 安装 Bark App 后获取，URL 中 api.day.app/ 后面那段）",
   "bark_server": "https://api.day.app",
-  "top_n": 5,
+  "top_n": 10,
+  "push_n": 5,
   "interests": "（可选）填你重点关注的方向，相关论文会被优先选入并排前面，例如：VLA, 灵巧手操作, 世界模型",
+  "same_day_only": true,
   "lookback_days": 3,
   "max_candidates": 40,
   "queries": [

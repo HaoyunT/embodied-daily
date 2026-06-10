@@ -1,7 +1,7 @@
 # 📚 embodied-daily · 每日具身智能论文日报
 
-> 每天早上 9:30 自动从 arXiv 抓取最新的**具身智能 (Embodied AI)** 论文，用 AI 精选 Top 5，
-> 生成详细中文解读，Top5 每篇**单独推送一条到 iPhone**（Bark）+ **Mac 桌面汇总通知** + 本地 Markdown 存档。
+> 每天早上 9:30 自动从 arXiv 抓取最新的**具身智能 (Embodied AI)** 论文，用 AI 精选 Top10，
+> 生成详细中文解读：**Mac 看全部 10 篇**（自动打开 Markdown 日报），**iPhone 推前 5 篇**（Bark 每篇一条），全文本地存档。
 > 全程无人值守，不需要打开任何程序。
 
 ---
@@ -10,12 +10,12 @@
 
 - 🔍 **自动抓取**：从 arXiv 多路检索（`cs.RO`、embodied、VLA、robot manipulation 等）合并去重
 - 🧠 **AI 精选解读**：调用本机 `claude` CLI（复用你的 Claude 订阅，**无需单独 API key**）做：
-  - Top 5 重要性排序
+  - Top10 重要性排序
   - 一句话亮点（TL;DR）
   - 详细中文摘要（问题 / 方法 / 创新点 / 结果 / 价值）
   - 关键要点列表 + 方向标签
 - 💻 **代码链接**：自动从摘要 / Papers with Code 抽取 GitHub 仓库，没有则如实标「暂无」
-- 📲 **送达 iPhone + Mac**：Top5 每篇单独推送一条详细解读（Bark）；Mac 弹一条汇总通知，并自动打开含全部 5 篇的日报 Markdown，全文同时本地存档
+- 📲 **送达 iPhone + Mac**：精选 Top10 中**前 5 篇**每篇单独推送一条详细解读到 iPhone（Bark）；Mac 弹汇总通知并自动打开含**全部 10 篇**的日报 Markdown，全文同时本地存档
 - ⏰ **定时无人值守**：macOS `launchd` 每天 9:30 自动运行，**不依赖终端是否打开**
 - 🛟 **优雅降级**：`claude` CLI 不可用时自动退化为英文摘要 + 关键词标签
 
@@ -49,37 +49,41 @@ cat archive/$(date +%F).md           # 查看今天的日报
 |---|---|---|
 | `bark_key` | Bark 推送 key（必填才会推 iPhone） | `""` |
 | `bark_server` | Bark 服务器（自建可改） | `https://api.day.app` |
-| `top_n` | 每天精选篇数（最终推送几篇） | `5` |
+| `top_n` | 精选篇数：Mac 日报 / 存档展示全部 `top_n` 篇 | `10` |
+| `push_n` | iPhone 只推送前 `push_n` 篇（≤ `top_n`） | `5` |
 | `interests` | **个人兴趣偏好**：填你关注的方向，相关论文会被优先选入并排前面（留空则不偏向） | `""` |
-| `lookback_days` | 回看天数（arXiv 周末不更新，兜底） | `3` |
+| `same_day_only` | **只推当日**：仅保留最新一个公布日的论文，不跨多天（即使不足 `top_n` 也不向前补） | `true` |
+| `lookback_days` | `same_day_only=false` 时生效：回看最近几天 | `3` |
 | `max_candidates` | 送 AI 精选的候选上限（即"分母"） | `40` |
 | `queries` | arXiv 检索式数组 | 见文件 |
 | `use_claude_cli` | 是否用 `claude` CLI 做中文摘要 | `true` |
 | `claude_bin` | claude 可执行文件路径（留空自动探测） | `""` |
 | `open_digest` | 跑完后是否自动用默认程序打开当天日报 `latest.md`（Mac） | `true` |
 
-> 💡 **个人化例子**：把 `interests` 设成 `"VLA, 灵巧手操作, 世界模型"`，每天的 Top5 就会更偏向这些方向。
+> 💡 **个人化例子**：把 `interests` 设成 `"VLA, 灵巧手操作, 世界模型"`，每天的 Top10 就会更偏向这些方向。
 
-## 🔢 Top5 是怎么选出来 & 排序的
+## 🔢 Top10 是怎么选出来 & 排序的（iPhone 取前 5）
 
 分两步：
 
 **第一步 · 圈定候选池（"分母"，纯按时间）**
-从多路 arXiv 检索（`cs.RO` / embodied / VLA / robot manipulation）抓取结果，合并去重，只保留最近 `lookback_days`（默认 3）天的论文，按提交时间倒序，取前 `max_candidates`（默认 **40**）篇作为候选。
-→ 所以**分母默认最多 40 篇**（实际数量随当天 arXiv 更新量浮动，运行日志里的 `候选数: N` 就是它）。
+从多路 arXiv 检索（`cs.RO` / embodied / VLA / robot manipulation）抓取结果，合并去重。默认 `same_day_only=true`，**只保留最新一个公布日的论文**（不跨多天），按提交时间倒序，取前 `max_candidates`（默认 **40**）篇作为候选。
+→ 所以分母 = **当日那一批**具身论文（运行日志里 `当日批次: 日期 篇数: N` 就是它）。若关掉 `same_day_only`，则改为回看 `lookback_days` 天。
 
 **第二步 · AI 精选 + 排序（按"重要性 + 相关性"）**
 把这批候选的**标题 + 摘要**整体发给 `claude`，让它：
-1. 挑出与具身智能最相关、最有价值的 `top_n`（默认 5）篇；
+1. 挑出与具身智能最相关、最有价值的 `top_n`（默认 **10**）篇；
 2. **按重要性从高到低排序**；
 3. 若配置了 `interests`，则**与你兴趣相关的优先选入、排更靠前**。
+
+最终：**Mac 日报 / 存档展示全部 `top_n`（10）篇**，**iPhone 只推送排在最前的 `push_n`（5）篇**。
 
 > ⚠️ **说明**：排序是 `claude` 基于摘要内容的**主观判断**，不依据引用量、作者或机构等硬指标，因此带有模型主观性，同一天重跑顺序可能略有变化。想要更可控，可在 `config.json` 里用 `interests` 引导，或自行修改脚本中 `claude_curate()` 的 prompt。
 
 ## 🧱 工作原理
 
 ```
-arXiv API ──▶ 合并去重/按日期筛选 ──▶ claude CLI 精选Top5+中文解读
+arXiv API ──▶ 合并去重/按日期筛选 ──▶ claude CLI 精选Top10+中文解读
                                             │
               ┌─────────────────────────────┼──────────────────────┐
               ▼                             ▼                       ▼

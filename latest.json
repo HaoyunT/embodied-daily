@@ -1,0 +1,318 @@
+{
+  "date": "2026-06-10",
+  "items": [
+    {
+      "paper": {
+        "id": "2606.10683",
+        "title": "UniDexTok: A Unified Dexterous Hand Tokenizer from Real Data",
+        "summary": "Dexterous hands are essential for fine-grained manipulation, but their hardware designs vary substantially across embodiments. Differences in kinematics, joint definitions, and degrees of freedom make it difficult to define a shared state representation compared with parallel grippers. As a result, dexterous-hand data remains fragmented and difficult to use for joint training. In this work, we propose the Unified Dexterous Hand Model (UDHM), which maps human and robot hand states into a shared 22-DoF semantic interface. Based on UDHM, we introduce UniDexTok, a retargeting-free state tokenizer that learns embodiment-conditioned discrete tokens from standardized real joint states. UniDexTok provides a unified representation for heterogeneous dexterous hands without relying on retargeting or simulation data. Compared with the recent baseline UniHM, UniDexTok reduces MPJAE from 15.63 degrees to 0.16 degrees and MPJPE from 18.51 mm to 0.18 mm, corresponding to error reductions of 98.98% and 99.03%, respectively. These results improve reconstruction from centimeter-scale to sub-millimeter accuracy. Experiments further show that data from other embodiments improves target-embodiment reconstruction accuracy, demonstrating the benefit of cross-embodiment tokenization. UniDexTok also shows strong zero-shot and few-shot reconstruction ability when new dexterous hands are introduced.",
+        "published": "2026-06-09T10:38:52Z",
+        "authors": [
+          "Dong Fang",
+          "Youjun Wu",
+          "Yuanxin Zhong",
+          "Rui Zhang",
+          "Yunlong Wang",
+          "Xiaosong Jia",
+          "Yu-Gang Jiang"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10683",
+        "pdf_url": "https://arxiv.org/pdf/2606.10683v1",
+        "github": ""
+      },
+      "tag": "灵巧手",
+      "tldr": "统一异构灵巧手表征，重建误差降低99%达亚毫米级",
+      "zh_summary": "不同灵巧手的运动学结构差异极大，导致数据碎片化、难以联合训练。本文提出统一灵巧手模型UDHM，将人手和多种机器人手映射到共享的22自由度语义接口。基于此构建UniDexTok，一种免重定向的状态分词器，从标准化真实关节状态中学习条件化离散token。该方法无需仿真数据或手动重定向，即可为异构灵巧手提供统一表征。与基线UniHM相比，关节角度误差从15.63度降至0.16度，位置误差从18.51mm降至0.18mm，分别减少约99%。这一突破使得跨手型数据的联合利用成为可能，为灵巧操作的基础模型训练铺平道路。",
+      "highlights": [
+        "关节角度误差降低99%至0.16度",
+        "22-DoF共享语义接口统一异构灵巧手",
+        "免重定向免仿真的真实数据分词器",
+        "亚毫米级重建精度支撑跨手型联合训练"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.10614",
+        "title": "Dexterous Point Policy: Learning Point-based Dexterous Hand Policies from Human Demonstrations",
+        "summary": "Robotic foundation models pre-trained on human demonstration videos have shown promise, but a significant embodiment gap remains when the resulting policies are deployed on real robots. A common remedy is to fine-tune these models on robot-specific demonstrations. However, robot data collection can be prohibitively expensive and time-consuming, which is particularly acute in dexterous manipulation, e.g., teleoperating a multi-fingered hand for even a single atomic task can take days. To address this, we introduce Dexterous Point Policy, a framework that learns dexterous manipulation policies directly from human videos and requires no robot demonstrations. Our core insight is that a unified 3D keypoint representation can bridge human and robot embodiments when used for both observations and actions. Specifically, we extract 3D keypoints of task-relevant objects and human hands from raw videos, and train an autoregressive transformer over these keypoints. We observe that at the keypoint level, specifically the wrist and fingertips, human and robot behaviors closely align, enabling direct policy transfer. On a suite of real-robot tasks spanning pick-and-place and tool use, Dexterous Point Policy attains 75.0% success, whereas a state-of-the-art VLA baseline reaches only 1.0%. Furthermore, our method generalizes strongly to unseen scenarios, including multi-object environments and novel object categories.",
+        "published": "2026-06-09T09:13:36Z",
+        "authors": [
+          "Beomjun Kim",
+          "Seong Hyeon Park",
+          "Seunghoon Sim",
+          "Seungjun Moon",
+          "Sanghyeok Lee",
+          "Jinwoo Shin"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10614",
+        "pdf_url": "https://arxiv.org/pdf/2606.10614v1",
+        "github": ""
+      },
+      "tag": "灵巧手",
+      "tldr": "仅从人类视频学习灵巧操作策略，零机器人演示数据",
+      "zh_summary": "灵巧手操作的遥操作数据采集极其耗时，即使单个原子任务也需数天。本文提出Dexterous Point Policy，直接从人类视频学习灵巧操作策略，完全无需机器人演示数据。核心洞察是：在3D关键点层面（腕部和指尖），人手与机器人手的行为高度对齐。方法从视频中提取任务相关物体和人手的3D关键点，训练自回归Transformer生成关键点轨迹。由于关键点天然桥接了人与机器人的体态差异，可直接迁移到多指灵巧手上。实验覆盖多种操作任务，验证了这一跨体态迁移的有效性。",
+      "highlights": [
+        "零机器人演示数据实现灵巧操作",
+        "3D关键点统一人手与机器人手表征",
+        "自回归Transformer生成操作轨迹",
+        "指尖级关键点桥接跨体态鸿沟"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.11184",
+        "title": "TacForeSight: Force-Guided Tactile World Model for Contact-Rich Manipulation",
+        "summary": "Contact-rich manipulation requires robots to continuously perceive and regulate evolving physical interactions under dynamic contact transitions or complex surface geometries. Recent imitation learning methods improve contact-aware control by incorporating tactile or force feedback, but they rarely model the asymmetric spatiotemporal roles of global force and local tactile sensing. To address this, we propose TacForeSight, a lightweight force-conditioned tactile foresight framework for real-time manipulation. The core component is TacForceWM, a tactile world model that predicts short-horizon tactile latent dynamics from dual-finger tactile observations conditioned on high-frequency wrist force and torque signals. Another key component, the Predictive Tactile-Conditioned Policy, leverages the predicted latents as anticipatory contact priors, models the current-to-future tactile evolution via cross-attention, and adaptively fuses visuo-tactile features through a tactile-guided gating module. By forecasting purely within a compact latent space, TacForeSight enables proactive contact reasoning with efficient real-time inference suitable for high-frequency manipulation control. Real-robot experiments on five representative tasks and three in-process perturbation settings show that TacForeSight consistently outperforms existing baselines, particularly under dynamic contact disturbances. All models and datasets will be made publicly available on the project website at https://tacforesight.github.io/ProjectPage.",
+        "published": "2026-06-09T17:59:03Z",
+        "authors": [
+          "Yujie Zang",
+          "Yuhang Zheng",
+          "Xian Nie",
+          "Yupeng Zheng",
+          "Shuai Tian",
+          "Songen Gu",
+          "Chen Gao",
+          "Zining Wang",
+          "Shuicheng Yan",
+          "Wenchao Ding"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.11184",
+        "pdf_url": "https://arxiv.org/pdf/2606.11184v1",
+        "github": ""
+      },
+      "tag": "世界模型/触觉",
+      "tldr": "力信号引导触觉预测，实现前瞻性接触操作控制",
+      "zh_summary": "接触密集型操作需要机器人持续感知和调节动态物理交互，现有模仿学习方法很少建模全局力和局部触觉的不对称时空角色。本文提出TacForeSight框架，核心是触觉世界模型TacForceWM，以高频腕部力/力矩信号为条件，预测双指触觉的短时域隐空间动态。预测性触觉条件策略利用预测隐变量作为前瞻性接触先验，通过交叉注意力建模当前到未来的触觉演化，并自适应融合视觉-触觉特征。整个预测在紧凑隐空间完成，支持实时推理。该方法将触觉从被动反馈提升为主动预判，是接触操作控制的重要范式突破。",
+      "highlights": [
+        "力信号条件化触觉隐空间预测",
+        "交叉注意力建模触觉时序演化",
+        "紧凑隐空间确保实时推理",
+        "前瞻性接触先验提升操作鲁棒性"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.10449",
+        "title": "GuideWalk: Learning Unified Autonomous Navigation and Locomotion for Humanoid Robots across Versatile Terrains",
+        "summary": "Humanoid robots have achieved strong locomotion capabilities, but reliable navigation on versatile terrains remains challenging because obstacle avoidance must be coordinated with dynamically feasible motion. In this work, we present GuideWalk, a unified end-to-end framework that integrates traversability-aware navigation guidance with terrain-adaptive locomotion teacher for humanoid navigation. Specifically, we introduce a navigation module that provides explicit velocity guidance, decoupling obstacle avoidance from terrain conditions to enable robust planning across diverse environments. We propose a composite teacher distillation scheme, where goal-directed commands and dynamically consistent actions are aggregated and distilled into a single policy. To further improve robustness, the distilled policy is refined with reinforcement learning and an auxiliary behavior cloning objective, which promotes exploration while preserving desirable teacher behaviors. Experiments demonstrate that GuideWalk achieves stable and effective navigation while maintaining stable humanoid locomotion.",
+        "published": "2026-06-09T05:55:36Z",
+        "authors": [
+          "Haoxuan Han",
+          "Chen Chen",
+          "Linao Gong",
+          "Xin Yang",
+          "Hao Hu",
+          "Junhong Guo",
+          "Zhicheng He",
+          "Yao Su",
+          "Fenghua He"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10449",
+        "pdf_url": "https://arxiv.org/pdf/2606.10449v1",
+        "github": ""
+      },
+      "tag": "人形机器人",
+      "tldr": "端到端统一人形导航与运动控制，跨复杂地形自主行走",
+      "zh_summary": "人形机器人虽已具备强大运动能力，但在复杂地形上实现可靠导航仍然困难，因为避障必须与动力学可行的运动协调。本文提出GuideWalk框架，端到端集成通行性感知的导航引导与地形自适应运动教师。导航模块提供显式速度引导，将避障与地形条件解耦，实现跨环境鲁棒规划。采用复合教师蒸馏方案，将目标导向指令和动力学一致动作聚合蒸馏到单一策略。蒸馏后通过强化学习和辅助行为克隆目标进一步优化，既促进探索又保留教师行为。实验表明GuideWalk在保持稳定人形步态的同时实现有效导航。",
+      "highlights": [
+        "端到端统一导航规划与运动控制",
+        "通行性感知解耦避障与地形条件",
+        "复合教师蒸馏+RL微调方案",
+        "跨多种复杂地形保持稳定步态"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.10568",
+        "title": "VeriSpace: Spatially Grounded Action Verification for Vision-Language-Action Models",
+        "summary": "Vision-language-action (VLA) models have shown strong promise for robotic manipulation, but their reliability at test time remains limited by one-shot action prediction, where even small action errors can cause grasp failure, collision, or incorrect task progression. A natural alternative is to equip VLA systems with test-time verification, allowing multiple candidate actions to be proposed and evaluated before execution. However, reliable action verification is challenging because it requires not only distinguishing subtle geometric differences between candidate actions, but also assessing whether an action makes meaningful progress toward the task goal. We present VeriSpace, a 3D-aware action verifier for test-time action selection in VLA systems. VeriSpace evaluates candidate actions through two key components: Dual-Path 3D-Injected Scene Encoding, which constructs a scene representation that jointly preserves visual semantics and explicit 3D geometry, and Spatially-Grounded Action Reasoning, which evaluates each action by reasoning over task-relevant spatial relations, geometric validity, and expected goal progress. Together, these components enable more reliable discrimination between subtle yet outcome-critical action candidates while remaining fully compatible with existing VLA policies. Experiments on public benchmarks and real-world robotic manipulation tasks show that VeriSpace consistently improves decision reliability over both underlying VLA policies and prior verification-based methods, yielding substantial gains in both in-distribution and out-of-distribution settings.",
+        "published": "2026-06-09T08:31:59Z",
+        "authors": [
+          "Guiyu Zhao",
+          "Longteng Guo",
+          "Junyou Zhu",
+          "Jun Fu",
+          "Yanghong Mei",
+          "Bin Cao",
+          "Jie Jiang",
+          "Xingjian He",
+          "Jing Liu"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10568",
+        "pdf_url": "https://arxiv.org/pdf/2606.10568v1",
+        "github": ""
+      },
+      "tag": "VLA",
+      "tldr": "3D感知的动作验证器，测试时为VLA多候选择优",
+      "zh_summary": "VLA模型的单次动作预测在部署时可靠性有限，微小误差可导致抓取失败或碰撞。本文提出VeriSpace，一种3D感知的动作验证器，用于VLA系统的测试时动作选择。系统通过双路径3D注入场景编码构建保留视觉语义和显式3D几何的场景表征，再通过空间接地动作推理评估每个候选动作是否在任务相关空间关系和几何约束下取得有效进展。VeriSpace可在多个候选动作中筛选最优执行方案，显著提升VLA的部署可靠性。这种测试时验证机制为VLA从实验室走向实际应用提供了重要的安全保障。",
+      "highlights": [
+        "双路径3D注入保留语义与几何信息",
+        "空间接地推理评估动作有效性",
+        "即插即用兼容多种VLA模型",
+        "测试时择优显著提升部署可靠性"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.10927",
+        "title": "AllDayNav: Lifelong Navigation via Real-World Reinforcement Learning",
+        "summary": "Lifelong embodied navigation in dynamic environments requires robots to form persistent scene understanding from fragmentary observations, which remains difficult for existing methods that rely on explicit maps or scene graphs and struggle to generalize beyond structured settings. We propose AllDayNav, a lifelong self-learning navigation framework that implicitly encodes scene dynamics into the billion-scale parameters of a large model via reinforcement learning, powered by a self-evolving multimodal memory that maintains and updates visual keyframes, semantic descriptions, and temporal context while autonomously generating open-vocabulary instructions, image goals, and structured rewards. Experiments in both synthetic and real-world environments across cross-room, cross-episode, and cross-task scenarios show that AllDayNav achieves success rates approaching $100\\%$ and consistently surpasses strong map-based, VLM, and RL baselines in path efficiency and robustness, demonstrating implicit, memory-driven reinforcement learning as a scalable alternative to explicit mapping for reliable lifelong navigation.",
+        "published": "2026-06-09T14:35:53Z",
+        "authors": [
+          "Hang Yin",
+          "Yinan Liang",
+          "Jiazhao Zhang",
+          "Jiahang Liu",
+          "Minghan Li",
+          "Zhizheng Zhang",
+          "He Wang"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10927",
+        "pdf_url": "https://arxiv.org/pdf/2606.10927v1",
+        "github": ""
+      },
+      "tag": "导航/强化学习",
+      "tldr": "大模型+自进化记忆实现终身导航，成功率近100%",
+      "zh_summary": "动态环境中的终身导航需要机器人从碎片化观测中建立持久场景理解，现有依赖显式地图或场景图的方法难以泛化。本文提出AllDayNav，通过强化学习将场景动态隐式编码到大模型的十亿级参数中。核心是自进化多模态记忆系统，维护和更新视觉关键帧、语义描述和时间上下文，同时自主生成开放词汇指令、图像目标和结构化奖励。在合成和真实环境的跨房间、跨episode、跨任务场景中，AllDayNav成功率接近100%，在路径效率和鲁棒性上持续超越基于地图、VLM和RL的强基线，展示了隐式记忆驱动RL作为显式建图的可扩展替代方案。",
+      "highlights": [
+        "终身导航成功率接近100%",
+        "自进化多模态记忆替代显式地图",
+        "十亿参数大模型隐式编码场景动态",
+        "跨房间跨任务全面超越强基线"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.10862",
+        "title": "LIBERO-Occ: Evaluating and Improving Vision-Language-Action Models under Scene-Induced Occlusion via Viewpoint Imagination",
+        "summary": "Vision-Language-Action (VLA) models achieve strong performance on standard manipulation benchmarks, but most evaluations assume that task-relevant objects are fully visible. This assumption often fails in realistic settings, where occlusion makes manipulation partially observable. In this paper, we study \\textit{scene-induced occlusion} as a fundamental challenge for VLA models and introduce \\textbf{LIBERO-Occ}, an occlusion-oriented extension of LIBERO. Experiments show that state-of-the-art VLAs suffer substantial performance degradation under occlusion. To address this issue, we propose \\textbf{Viewpoint Imagination (VIM)}, which generates a complementary view from an occluded primary observation and conditions action prediction on both observed and imagined evidence. VIM improves robustness across task suites, occlusion types, and severity levels without requiring additional cameras at deployment time, suggesting that viewpoint imagination is an promising mechanism for perception completion in partially observable manipulation. Our benchmark and corresponding code are available at: \\href{https://github.com/litsh/Libero-Occ}{https://github.com/litsh/Libero-Occ}.",
+        "published": "2026-06-09T13:39:49Z",
+        "authors": [
+          "Taishan Li",
+          "Jiwen Zhang",
+          "Siyuan Wang",
+          "Xuanjing Huang",
+          "Zhongyu Wei"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10862",
+        "pdf_url": "https://arxiv.org/pdf/2606.10862v1",
+        "github": "https://github.com/litsh/Libero-Occ"
+      },
+      "tag": "VLA",
+      "tldr": "视点想象生成互补视角，VLA遮挡下性能大幅恢复",
+      "zh_summary": "VLA模型在标准评测中表现优异，但多数评估假设目标物体完全可见。现实中遮挡使操作变为部分可观测问题。本文研究场景遮挡对VLA的影响，提出LIBERO-Occ基准，实验表明顶尖VLA在遮挡下性能严重下降。为此提出视点想象VIM方法，从被遮挡的主视角观测生成互补视图，基于观测和想象的双重证据进行动作预测。VIM无需部署时添加额外相机，即可跨任务套件、遮挡类型和严重程度提升鲁棒性。这表明视点想象是部分可观测操作中感知补全的有效机制。",
+      "highlights": [
+        "首个系统研究遮挡对VLA影响的基准",
+        "视点想象免额外相机恢复遮挡信息",
+        "跨遮挡类型和严重程度普遍有效",
+        "揭示VLA在部分可观测下的脆弱性"
+      ],
+      "code": "https://github.com/litsh/Libero-Occ"
+    },
+    {
+      "paper": {
+        "id": "2606.10743",
+        "title": "Hand-centric Human-to-Robot Trajectory Transfer from Video Demonstrations via Open-World Contact Localization",
+        "summary": "Learning from human video demonstrations remains challenging due to noisy hand-object interactions, unseen objects with partial observation, and cross-embodiment discrepancy. To address these challenges, we present \\textit{HOWTransfer} (\\emph{H}and-\\emph{O}bject \\emph{O}pen-\\emph{W}orld Transfer), a hand-centric framework that distills human demonstrations into contact-aware, taxonomy-informed, and diverse robotic trajectories. Instead of relying on object-specific descriptions, vision-language queries, or explicit object-state tracking, \\emph{HOWTransfer} recovers temporally consistent 3D hand motion and localizes temporal contact intervals by reasoning over observed hand-object interaction cues. The localized contact onsets are then used to retarget human grasp intent into multi-modal parallel-jaw grasp hypotheses, which are propagated along the recovered wrist trajectory to generate robot-executable motions. Finally, a trajectory editing stage refines contact alignment and produces diverse executable variants from a single demonstration. Experiments across diverse manipulation tasks show that \\emph{HOWTransfer} enables accurate contact localization and high-quality robot motion retargeting with $86\\%$ success, which is preferred over teleoperated trajectories in a blinded preference study.",
+        "published": "2026-06-09T11:53:29Z",
+        "authors": [
+          "Yitian Shi",
+          "Di Wen",
+          "Zhengqi Han",
+          "Zicheng Guo",
+          "Yu Hu",
+          "Edgar Welte",
+          "Kunyu Peng",
+          "Rainer Stiefelhagen",
+          "Rania Rayyes"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10743",
+        "pdf_url": "https://arxiv.org/pdf/2606.10743v1",
+        "github": ""
+      },
+      "tag": "操作/迁移",
+      "tldr": "以手为中心从人类视频蒸馏出接触感知的机器人轨迹",
+      "zh_summary": "从人类视频演示学习机器人操作面临手-物交互噪声、未见物体和跨体态差异三大挑战。本文提出HOWTransfer框架，以手为中心，将人类演示蒸馏为接触感知、分类信息丰富的多样化机器人轨迹。方法不依赖物体特定描述或视觉语言查询，而是恢复时间一致的3D手部运动，通过推理手-物交互线索定位时间接触区间。利用定位的接触起始点将人类抓取意图重定向为多模态平行夹爪抓取假设，沿恢复的腕部轨迹传播生成可执行运动。最后通过轨迹编辑阶段优化接触对齐并从单次演示生成多样可执行变体。",
+      "highlights": [
+        "接触区间定位桥接人-机操作差异",
+        "单次人类演示生成多样机器人轨迹",
+        "免物体模型免语言查询的通用方案",
+        "3D手部运动恢复+抓取意图重定向"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.11092",
+        "title": "RoboNaldo: Accurate, Stable and Powerful Humanoid Soccer Shooting via Motion-Guided Curriculum Reinforcement Learning",
+        "summary": "Elite humanoid soccer shooting requires whole-body stability, high-impulse whole-body interactions, and accuracy to targets. Motion tracking-driven reinforcement learning (RL) provides stability in whole-body movement coordination, but a fixed reference makes it hard to adapt to varied ball positions and strike timings; in contrast, task reward-driven RL struggles to explore and discover valid kicks from scratch. We therefore introduce RoboNaldo, a three-stage motion-guided curriculum RL framework for high-impulse humanoid interaction. A single human-kick reference is used as a scaffold and progressively shifts optimization towards shooting performance. The curriculum first learns a stable whole-body kicking prior, then adapts the kick to free-kick settings where the ball is stationary at random positions, and finally extends it to moving-ball shooting through a locomotion-command and kick-trigger interface. A high-level heuristic planner controls this interface during training, while alternative high-level controllers can drive the same low-level policy at inference. In simulation, RoboNaldo demonstrates free-kick shot error 48.6% lower and shoot velocity 2.96x than prior work baselines. In real world on a Unitree G1 with onboard perception, RoboNaldo attains 0.73 m and 0.86 m average target shooting error from 3 m away in free-kick and moving-ball cases, accordingly. And the post-contact ball velocity reaches 13.10 m/s, which is 59-71% of reported professional open-play shot speed. Project page: $\\href{https://opendrivelab.com/RoboNaldo}{\\text{opendrivelab.com/RoboNaldo}}$.",
+        "published": "2026-06-09T16:51:13Z",
+        "authors": [
+          "Yichao Zhong",
+          "Yidan Lu",
+          "Yuhang Lu",
+          "Tianyang Tang",
+          "Haoguang Mai",
+          "Yixuan Pan",
+          "Tianyu Li",
+          "Li Chen",
+          "Jingbo Wang",
+          "Zhongyu Li",
+          "Peng Lu",
+          "Hongyang Li"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.11092",
+        "pdf_url": "https://arxiv.org/pdf/2606.11092v1",
+        "github": ""
+      },
+      "tag": "人形机器人",
+      "tldr": "三阶段课程RL让人形机器人学会精准大力射门",
+      "zh_summary": "精英级人形足球射门需要全身稳定性、高冲击全身交互和目标精度。运动跟踪RL提供稳定协调但难以适应变化的球位，纯任务奖励RL又难以从零探索有效踢球动作。本文提出RoboNaldo，三阶段运动引导课程RL框架：首先学习稳定的全身踢球先验，然后适应球在随机位置的任意球设置，最后扩展到移动球射门。单一人类踢球参考作为脚手架，逐步将优化重心转向射门性能。高层启发式规划器在训练时控制运动-触发接口，推理时可替换其他控制器。仿真中实现精准有力射门，展现了课程学习解决高动态人形交互的潜力。",
+      "highlights": [
+        "三阶段课程从稳定先验到动态射门",
+        "单一人类参考运动逐步释放为任务优化",
+        "运动-触发接口支持多种高层控制器",
+        "高冲击全身交互的稳定协调控制"
+      ],
+      "code": "暂无"
+    },
+    {
+      "paper": {
+        "id": "2606.10832",
+        "title": "GUIDE: Goal-Initialized Directional Understanding for End-to-End Visual Navigation",
+        "summary": "Learning-based visual navigation for legged robots typically relies on continuous goal updates from hierarchical state estimation to provide a persistent directional reference. This reliance incurs additional sensory and computational overhead and deviates from fully end-to-end mobile autonomy. Furthermore, under partial observability, policies are prone to learn myopic behaviors, easily becoming trapped in dead ends and complex structural layouts. To address these limitations, we investigate a goal-initialized navigation setting, where the target is provided only once at the beginning of an episode, requiring the robot to operate based on intrinsic spatial memory without subsequent goal updates from external modules. In this work, we propose GUIDE, a fully end-to-end reinforcement learning framework designed to cultivate internal directional awareness. Specifically, GUIDE incorporates a spatial anchor predictor that leverages multi-frequency proprioceptive history to extract egomotion representations, thereby maintaining a persistent long-horizon spatial context for navigation. Concurrently, it utilizes raw depth streams to perceive local environmental geometry. We evaluate the proposed framework across both simulation and real-world scenarios on a quadruped robot. Experiments show that GUIDE learns reliable egomotion and directional awareness, enabling a fully end-to-end deployed policy to safely navigate through dense clutter and structured mazes without subsequent goal guidance or prior maps.",
+        "published": "2026-06-09T13:19:30Z",
+        "authors": [
+          "Liang Wang",
+          "Jin Jin",
+          "KanZhong Yao",
+          "YiBin Wu",
+          "Fangqiang Ding",
+          "Jin Wang",
+          "Jun Wu",
+          "Zhe Sun",
+          "Qiuguo Zhu"
+        ],
+        "abs_url": "https://arxiv.org/abs/2606.10832",
+        "pdf_url": "https://arxiv.org/pdf/2606.10832v1",
+        "github": ""
+      },
+      "tag": "导航/四足",
+      "tldr": "仅初始目标+本体感觉记忆实现四足端到端长程导航",
+      "zh_summary": "足式机器人的视觉导航通常依赖层级状态估计持续更新目标方向，增加了传感和计算开销。本文研究目标初始化导航设定：目标仅在开始时给出一次，机器人需依靠内在空间记忆自主运行。提出GUIDE框架，一种端到端强化学习方法用于培养内部方向感。具体设计空间锚点预测器，利用多频本体感觉历史提取自运动表征，维持持久的长程空间上下文。该方法摆脱了对外部定位模块的依赖，在部分可观测环境中避免了短视行为和死路陷阱。GUIDE展示了纯内在记忆驱动的端到端导航在四足机器人上的可行性。",
+      "highlights": [
+        "目标仅给一次即可完成长程导航",
+        "本体感觉提取自运动空间记忆",
+        "摆脱外部定位实现端到端自主",
+        "有效避免死路陷阱等短视行为"
+      ],
+      "code": "暂无"
+    }
+  ]
+}

@@ -31,8 +31,11 @@ ATOM = "{http://www.w3.org/2005/Atom}"
 DEFAULT_CONFIG = {
     "bark_key": "",                       # 必填: Bark App 里那串 key, 例如 https://api.day.app/XXXXXX 的 XXXXXX
     "bark_server": "https://api.day.app", # 自建 Bark 服务器可改
-    "top_n": 5,
-    "lookback_days": 3,                   # 抓取最近几天(arXiv 周末不更新, 默认 3 天兜底)
+    "top_n": 10,                          # 精选篇数(Mac 日报/存档展示全部 top_n 篇)
+    "push_n": 5,                          # iPhone 只推送前 push_n 篇 (<= top_n)
+    "interests": "",                      # 个人兴趣偏好, 相关论文优先选入并排前面
+    "same_day_only": True,                # True: 只推当日(最新一个公布日)的论文, 不跨多天
+    "lookback_days": 3,                   # same_day_only=False 时生效: 回看最近几天
     "max_candidates": 40,                 # 送给 claude 排序的候选上限
     "queries": [
         "cat:cs.RO",
@@ -139,10 +142,20 @@ def gather_candidates(cfg):
             if p["id"] not in seen:
                 seen[p["id"]] = p
     cand = list(seen.values())
-    # 优先保留 lookback 天内的; 不够再用更早的补齐
-    recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
-    pool = recent if len(recent) >= cfg["top_n"] else cand
-    pool.sort(key=lambda p: p.get("published", ""), reverse=True)
+    cand.sort(key=lambda p: p.get("published", ""), reverse=True)
+    if cfg.get("same_day_only", True):
+        # 限定当日: 只保留最新一个公布日的论文, 不跨多天 (即使不足 top_n 也不向前补)
+        dates = [p["published"][:10] for p in cand if p.get("published")]
+        if dates:
+            newest = max(dates)
+            pool = [p for p in cand if p.get("published", "")[:10] == newest]
+            log("当日批次:", newest, "篇数:", len(pool))
+        else:
+            pool = cand
+    else:
+        # 回看 lookback 天; 不够 top_n 再用更早的补齐
+        recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
+        pool = recent if len(recent) >= cfg["top_n"] else cand
     return pool[: cfg["max_candidates"]]
 
 
@@ -440,17 +453,26 @@ def main():
     md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
-    # 同时维护一个 latest.md
+    # 同时维护 latest.md 与结构化的 latest.json (供 --push-only 复用)
     with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
         f.write(md)
+    with open(os.path.join(HERE, "latest.json"), "w", encoding="utf-8") as f:
+        json.dump({"date": date_str, "items": items}, f, ensure_ascii=False, indent=2)
     log("已存档:", md_path)
 
-    # 每篇单独推送一条完整详细解读到 iPhone (共 N 条)
-    push_digest(cfg, items, date_str)
-    # Mac 桌面通知一条汇总 (详细内容见 iPhone / Markdown 存档)
+    deliver(cfg, items, date_str)
+    log("完成")
+
+
+def deliver(cfg, items, date_str):
+    """推送/通知/打开: iPhone 只推前 push_n 篇, Mac 通知+打开含全部 top_n 篇的日报"""
+    # iPhone: 只推前 push_n 篇 (默认5); Mac/存档: 全部 top_n 篇 (默认10)
+    push_n = min(int(cfg.get("push_n", 5)), len(items))
+    push_digest(cfg, items[:push_n], date_str)
+    # Mac 桌面通知一条汇总 (列出全部 top_n 篇标题)
     titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
                        for i, it in enumerate(items, 1))
-    notify_macos("📚 今日具身智能 Top%d · %s" % (len(items), date_str),
+    notify_macos("📚 今日具身智能 Top%d · %s (手机推前%d篇)" % (len(items), date_str, push_n),
                  " / ".join(dict.fromkeys(it["tag"] for it in items)),
                  titles)
     # 自动用默认程序打开当天日报 (Mac 原生通知点击无动作, 用这个兜底)
@@ -459,12 +481,30 @@ def main():
             subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
         except Exception as e:
             log("打开日报失败:", e)
+
+
+def push_only():
+    """读取上次生成的 latest.json 直接重推, 不重新抓取/调用 claude"""
+    cfg = load_config()
+    path = os.path.join(HERE, "latest.json")
+    if not os.path.exists(path):
+        log("没有 latest.json, 请先正常运行一次")
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    items = data.get("items", [])
+    date_str = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    log("从 latest.json 重推, 篇数:", len(items))
+    deliver(cfg, items, date_str)
     log("完成")
 
 
 if __name__ == "__main__":
     try:
-        main()
+        if "--push-only" in sys.argv:
+            push_only()
+        else:
+            main()
     except Exception as e:
         log("致命错误:", repr(e))
         sys.exit(1)
