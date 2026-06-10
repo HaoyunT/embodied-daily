@@ -1,0 +1,13 @@
+# Personal config and secrets (contains the Bark key, never commit)
+config.json
+
+# Run artifacts
+logs/
+latest.md
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

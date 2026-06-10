@@ -1,0 +1,15 @@
+{
+  "bark_key": "put your Bark key here (get it after installing the Bark App on iPhone; it is the part after api.day.app/ in the URL)",
+  "bark_server": "https://api.day.app",
+  "top_n": 5,
+  "lookback_days": 3,
+  "max_candidates": 40,
+  "queries": [
+    "cat:cs.RO",
+    "all:embodied",
+    "all:%22vision-language-action%22",
+    "all:%22robot+manipulation%22"
+  ],
+  "use_claude_cli": true,
+  "claude_bin": ""
+}
