@@ -1,7 +1,7 @@
 # 📚 embodied-daily · 每日具身智能论文日报
 
 > 每天早上 9:30 自动从 arXiv 抓取最新的**具身智能 (Embodied AI)** 论文，用 AI 精选 Top 5，
-> 生成详细中文解读，并**推送到 iPhone**（Bark）+ macOS 通知 + 本地 Markdown 存档。
+> 生成详细中文解读，Top5 每篇**单独推送一条到 iPhone**（Bark）+ **Mac 桌面汇总通知** + 本地 Markdown 存档。
 > 全程无人值守，不需要打开任何程序。
 
 ---
@@ -15,7 +15,7 @@
   - 详细中文摘要（问题 / 方法 / 创新点 / 结果 / 价值）
   - 关键要点列表 + 方向标签
 - 💻 **代码链接**：自动从摘要 / Papers with Code 抽取 GitHub 仓库，没有则如实标「暂无」
-- 📲 **多端送达**：iPhone（Bark 推送）+ macOS 桌面通知 + 本地 Markdown 存档
+- 📲 **送达 iPhone + Mac**：Top5 每篇单独推送一条详细解读（Bark），Mac 弹一条汇总通知，并本地 Markdown 存档
 - ⏰ **定时无人值守**：macOS `launchd` 每天 9:30 自动运行，**不依赖终端是否打开**
 - 🛟 **优雅降级**：`claude` CLI 不可用时自动退化为英文摘要 + 关键词标签
 
@@ -63,7 +63,7 @@ arXiv API ──▶ 合并去重/按日期筛选 ──▶ claude CLI 精选Top5
                                             │
               ┌─────────────────────────────┼──────────────────────┐
               ▼                             ▼                       ▼
-        Bark → iPhone               macOS 桌面通知           Markdown 存档
+   Bark → iPhone(每篇一条详细)        Mac 桌面汇总通知          Markdown 存档
 ```
 
 ## 📁 目录结构
@@ -82,7 +82,7 @@ embodied-daily/
 
 ## 📋 依赖
 
-- macOS（用到 `launchd` 与 `osascript`）
+- macOS（用到 `launchd` 定时与 `osascript` 桌面通知）
 - Python 3（系统自带 `/usr/bin/python3` 即可）
 - 系统 `curl`
 - 可选：[`claude` CLI](https://claude.com/claude-code)（用于高质量中文摘要）

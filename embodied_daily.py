@@ -321,15 +321,29 @@ def render_markdown(items, date_str):
 
 
 def render_push_body(items):
+    # 单条推送: 每篇含标签+标题+一句话亮点+关键要点+链接; 完整长篇解读见 Markdown 存档
     parts = []
     for i, it in enumerate(items, 1):
         p = it["paper"]
-        tldr = ("💡 " + it["tldr"] + "\n") if it.get("tldr") else ""
-        seg = "%d.【%s】%s\n%s%s\n📄 %s\n💻 %s" % (
-            i, it["tag"], p["title"], tldr, it["zh_summary"], p["abs_url"], it["code"]
-        )
-        parts.append(seg)
+        seg = ["%d.【%s】%s" % (i, it["tag"], p["title"])]
+        if it.get("tldr"):
+            seg.append("💡 " + it["tldr"])
+        hl = it.get("highlights") or []
+        if hl:
+            seg.append("· " + " · ".join(hl[:2]))
+        seg.append("📄 " + p["abs_url"])
+        parts.append("\n".join(seg))
     return "\n\n".join(parts)
+
+
+def _truncate(s, limit=3200):
+    if len(s.encode("utf-8")) <= limit:
+        return s
+    # 按字节安全截断
+    out = s
+    while len(out.encode("utf-8")) > limit - 3:
+        out = out[:-1]
+    return out + "…"
 
 
 def push_bark(cfg, title, body):
@@ -339,7 +353,7 @@ def push_bark(cfg, title, body):
         return
     url = cfg["bark_server"].rstrip("/") + "/" + key
     payload = json.dumps({
-        "title": title, "body": body, "group": "具身日报", "sound": "birdsong"
+        "title": title, "body": _truncate(body), "group": "具身日报", "sound": "birdsong"
     }, ensure_ascii=False)
     # 用系统 curl 推送 (比 urllib 对 Bark 的 TLS 更稳定)
     try:
@@ -371,6 +385,31 @@ def notify_macos(title, subtitle, msg):
         log("macOS 通知失败:", e)
 
 
+def push_digest(cfg, items, date_str):
+    """每篇论文单独推一条完整详细解读 (共 N 条, 每条都在 Bark 上限内)"""
+    if not cfg.get("bark_key", "").strip():
+        log("未配置 bark_key, 跳过 iPhone 推送 (请在 config.json 填入)")
+        return
+    n = len(items)
+    for i, it in enumerate(items, 1):
+        p = it["paper"]
+        title = "📚 %d/%d 今日具身 · %s" % (i, n, date_str)
+        lines = ["【%s】%s" % (it["tag"], p["title"])]
+        if it.get("tldr"):
+            lines.append("💡 " + it["tldr"])
+        lines.append("")
+        lines.append(it["zh_summary"])
+        if it.get("highlights"):
+            lines.append("")
+            lines.append("✨ 亮点:")
+            for h in it["highlights"]:
+                lines.append("· " + h)
+        lines.append("")
+        lines.append("📄 arXiv: " + p["abs_url"])
+        lines.append("💻 代码: " + it["code"])
+        push_bark(cfg, title, "\n".join(lines))
+
+
 def main():
     cfg = load_config()
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -378,7 +417,7 @@ def main():
     candidates = gather_candidates(cfg)
     log("候选数:", len(candidates))
     if not candidates:
-        notify_macos("具身日报", date_str, "今日未抓取到论文 (arXiv 可能无更新)")
+        push_bark(cfg, "📚 今日具身智能", "今日未抓取到论文 (arXiv 可能无更新)")
         log("无候选, 退出")
         return
     items = build_items(cfg, candidates)
@@ -394,10 +433,14 @@ def main():
         f.write(md)
     log("已存档:", md_path)
 
-    title = "📚 今日具身智能 Top%d · %s" % (len(items), date_str)
-    push_bark(cfg, title, render_push_body(items))
-    notify_macos("📚 今日具身智能 Top%d" % len(items), date_str,
-                 items[0]["paper"]["title"] if items else "已生成")
+    # 每篇单独推送一条完整详细解读到 iPhone (共 N 条)
+    push_digest(cfg, items, date_str)
+    # Mac 桌面通知一条汇总 (详细内容见 iPhone / Markdown 存档)
+    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
+                       for i, it in enumerate(items, 1))
+    notify_macos("📚 今日具身智能 Top%d · %s" % (len(items), date_str),
+                 " / ".join(dict.fromkeys(it["tag"] for it in items)),
+                 titles)
     log("完成")
 
 

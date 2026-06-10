@@ -1,16 +1,16 @@
 ---
 name: embodied-daily
-description: 生成/查看今日具身智能(Embodied AI)论文日报 —— 从 arXiv 抓取最新具身相关论文, 给出中文摘要、arXiv链接、代码仓库、方向标签, Top5。可手动触发, 也会推送到 iPhone(Bark) 与 macOS 通知。当用户说"具身日报""今天的具身论文""embodied daily"时使用。
+description: 生成/查看今日具身智能(Embodied AI)论文日报 —— 从 arXiv 抓取最新具身相关论文, 给出中文摘要、arXiv链接、代码仓库、方向标签, Top5。可手动触发, 每篇单独推送一条详细解读到 iPhone(Bark), 并在 Mac 弹一条汇总通知。当用户说"具身日报""今天的具身论文""embodied daily"时使用。
 ---
 
 # 具身智能日报 (embodied-daily)
 
-每天 9:30 由 launchd 自动运行 `~/embodied-daily/embodied_daily.py`，推送到 iPhone(Bark) + macOS 通知 + 存档 Markdown。本 skill 用于**手动触发**或**查看/调整**。
+每天 9:30 由 launchd 自动运行 `~/embodied-daily/embodied_daily.py`，把 Top5 论文**每篇单独推送一条详细解读到 iPhone(Bark)**、在 **Mac 弹一条汇总通知**，并存档为 Markdown。本 skill 用于**手动触发**或**查看/调整**。
 
 ## 用户意图与对应动作
 
 ### 1. 立即生成今天的日报（手动触发整条链路）
-运行脚本，它会抓取 arXiv → claude 中文摘要 → 推送 Bark/macOS → 存档：
+运行脚本，它会抓取 arXiv → claude 中文摘要 → 每篇一条推送到 Bark + Mac 汇总通知 → 存档：
 ```bash
 /usr/bin/python3 ~/embodied-daily/embodied_daily.py
 ```
