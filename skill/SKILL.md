@@ -32,6 +32,7 @@ Then pick the Top 5 embodied-AI papers and give a Chinese summary + arXiv link +
 ### 4. Adjust configuration
 Edit `~/embodied-daily/config.json`:
 - `bark_key`: iPhone Bark push key (**required on first use**)
+- `interests`: personal interest preferences (e.g. "VLA, dexterous hands"); matching papers are picked first and ranked higher
 - `top_n`: number of papers per day (default 5)
 - `lookback_days`: how many recent days to fetch (default 3)
 - `queries`: array of arXiv search queries

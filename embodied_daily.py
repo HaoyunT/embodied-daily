@@ -188,10 +188,20 @@ def claude_curate(cfg, candidates):
     for i, p in enumerate(candidates):
         abs = p["summary"][:1100]
         listing.append("[%d] Title: %s\nAbstract: %s" % (i, p["title"], abs))
-    prompt = (
+    # optional: reader interests (from interests in config.json), used to shape selection and ranking
+    interests = str(cfg.get("interests", "")).strip()
+    interest_line = ""
+    if interests:
+        interest_line = (
+            "[Reader preference] My personal focus: %s. Prioritize papers related to these areas,"
+            "and rank them higher; but if other embodied work that day is clearly more important, they may still be included.\n" % interests
+        )
+    head = (
         "You are a senior research assistant in Embodied AI. Below are several arXiv paper candidates.\n"
         "Please pick the %d most relevant and valuable papers on [Embodied AI] (covering areas such as VLA, robot manipulation/grasping,"
-        "navigation, humanoid robots, dexterous hands, sim-to-real, world models, reinforcement learning control, etc.).\n"
+        "navigation, humanoid robots, dexterous hands, sim-to-real, world models, RL control, etc.).\n" % cfg["top_n"]
+    )
+    body = (
         "For each paper produce a detailed write-up in Chinese, covering these fields:\n"
         "- tag: short Chinese topic tag (e.g. VLA / dexterous hands / world model)\n"
         "- tldr: one-line highlight (20-30 chars, so the point is obvious at a glance)\n"
@@ -203,8 +213,9 @@ def claude_curate(cfg, candidates):
         "Format: [{\"idx\": candidate index (integer), \"tag\": \"...\", \"tldr\": \"...\", "
         "\"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
         "Sort by importance from high to low, exactly %d elements.\n\nCandidate list:\n%s"
-        % (cfg["top_n"], cfg["top_n"], "\n\n".join(listing))
+        % (cfg["top_n"], "\n\n".join(listing))
     )
+    prompt = head + interest_line + body
     try:
         log("calling claude CLI to generate Chinese summaries (may take 1-2 minutes)...")
         proc = subprocess.run(

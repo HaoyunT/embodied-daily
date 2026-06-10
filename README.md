@@ -49,12 +49,31 @@ In Claude Code you can also type `/embodied-daily` to trigger it or debug by han
 |---|---|---|
 | `bark_key` | Bark push key (required for iPhone push) | `""` |
 | `bark_server` | Bark server (change if self-hosted) | `https://api.day.app` |
-| `top_n` | Number of papers selected per day | `5` |
+| `top_n` | Number of papers selected per day (how many get pushed in the end) | `5` |
+| `interests` | **Personal interest preferences**: list the directions you care about; related papers are prioritized and ranked first (leave empty for no bias) | `""` |
 | `lookback_days` | Days to look back (arXiv does not update on weekends, so this is a fallback) | `3` |
-| `max_candidates` | Max candidates sent to the AI for ranking | `40` |
+| `max_candidates` | Max number of candidates sent to AI for curation (i.e. the "denominator") | `40` |
 | `queries` | Array of arXiv search queries | See file |
 | `use_claude_cli` | whether to use the `claude` CLI for Chinese summaries | `true` |
 | `claude_bin` | Path to the claude executable (auto-detected if empty) | `""` |
+
+> 💡 **Personalization example**: set `interests` to `"VLA, dexterous hand manipulation, world models"` and the daily Top5 will lean toward these directions.
+
+## 🔢 How Top5 is selected & ranked
+
+Two steps:
+
+**Step 1 · Define the candidate pool (the "denominator", by time only)**
+Fetch results from multiple arXiv queries (`cs.RO` / embodied / VLA / robot manipulation), merge and dedupe, keep only papers from the last `lookback_days` (default 3) days, sort by submission time descending, and take the first `max_candidates` (default **40**) as candidates.
+→ So the **denominator defaults to at most 40 papers** (the actual count varies with how much arXiv updates that day; `candidates: N` in the run log is exactly it).
+
+**Step 2 · AI curation + ranking (by "importance + relevance")**
+Send this batch of candidates' **titles + abstracts** to `claude` in one go, and have it:
+1. Pick the `top_n` (default 5) most relevant and valuable Embodied AI papers;
+2. **Sort by importance, high to low**;
+3. If `interests` is configured, **papers relevant to your interests are picked first and ranked higher**.
+
+> ⚠️ **Note**: the ranking is a **subjective judgment** by `claude` based on the abstracts, not on hard metrics such as citation count, authors, or institutions. It therefore carries model subjectivity, and rerunning on the same day may slightly change the order. For more control, steer it with `interests` in `config.json`, or edit the prompt of `claude_curate()` in the script yourself.
 
 ## 🧱 How it works
 
