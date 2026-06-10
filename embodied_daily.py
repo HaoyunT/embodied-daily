@@ -321,15 +321,29 @@ def render_markdown(items, date_str):
 
 
 def render_push_body(items):
+    # single push: each paper has tags+title+one-line highlight+key points+link; see the Markdown archive for the full long-form write-up
     parts = []
     for i, it in enumerate(items, 1):
         p = it["paper"]
-        tldr = ("💡 " + it["tldr"] + "\n") if it.get("tldr") else ""
-        seg = "%d.【%s】%s\n%s%s\n📄 %s\n💻 %s" % (
-            i, it["tag"], p["title"], tldr, it["zh_summary"], p["abs_url"], it["code"]
-        )
-        parts.append(seg)
+        seg = ["%d.【%s】%s" % (i, it["tag"], p["title"])]
+        if it.get("tldr"):
+            seg.append("💡 " + it["tldr"])
+        hl = it.get("highlights") or []
+        if hl:
+            seg.append("· " + " · ".join(hl[:2]))
+        seg.append("📄 " + p["abs_url"])
+        parts.append("\n".join(seg))
     return "\n\n".join(parts)
+
+
+def _truncate(s, limit=3200):
+    if len(s.encode("utf-8")) <= limit:
+        return s
+    # Byte-safe truncation
+    out = s
+    while len(out.encode("utf-8")) > limit - 3:
+        out = out[:-1]
+    return out + "…"
 
 
 def push_bark(cfg, title, body):
@@ -339,7 +353,7 @@ def push_bark(cfg, title, body):
         return
     url = cfg["bark_server"].rstrip("/") + "/" + key
     payload = json.dumps({
-        "title": title, "body": body, "group": "Embodied Daily", "sound": "birdsong"
+        "title": title, "body": _truncate(body), "group": "Embodied Daily", "sound": "birdsong"
     }, ensure_ascii=False)
     # push via system curl (more reliable TLS to Bark than urllib)
     try:
@@ -371,6 +385,31 @@ def notify_macos(title, subtitle, msg):
         log("macOS notification failed:", e)
 
 
+def push_digest(cfg, items, date_str):
+    """Push one full detailed write-up per paper (N total, each within the Bark limit)"""
+    if not cfg.get("bark_key", "").strip():
+        log("bark_key not configured, skipping iPhone push (please fill it in config.json)")
+        return
+    n = len(items)
+    for i, it in enumerate(items, 1):
+        p = it["paper"]
+        title = "📚 %d/%d today embodied - %s" % (i, n, date_str)
+        lines = ["【%s】%s" % (it["tag"], p["title"])]
+        if it.get("tldr"):
+            lines.append("💡 " + it["tldr"])
+        lines.append("")
+        lines.append(it["zh_summary"])
+        if it.get("highlights"):
+            lines.append("")
+            lines.append("✨ Highlights:")
+            for h in it["highlights"]:
+                lines.append("· " + h)
+        lines.append("")
+        lines.append("📄 arXiv: " + p["abs_url"])
+        lines.append("💻 Code: " + it["code"])
+        push_bark(cfg, title, "\n".join(lines))
+
+
 def main():
     cfg = load_config()
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -378,7 +417,7 @@ def main():
     candidates = gather_candidates(cfg)
     log("candidate count:", len(candidates))
     if not candidates:
-        notify_macos("Embodied Daily", date_str, "No papers fetched today (arXiv may have no updates)")
+        push_bark(cfg, "📚 Embodied AI Today", "No papers fetched today (arXiv may have no updates)")
         log("no candidates, exiting")
         return
     items = build_items(cfg, candidates)
@@ -394,10 +433,14 @@ def main():
         f.write(md)
     log("Archived:", md_path)
 
-    title = "📚 Today's Embodied AI Top%d - %s" % (len(items), date_str)
-    push_bark(cfg, title, render_push_body(items))
-    notify_macos("📚 Today's Embodied AI Top%d" % len(items), date_str,
-                 items[0]["paper"]["title"] if items else "Generated")
+    # Push one full detailed analysis per paper to iPhone (N messages in total)
+    push_digest(cfg, items, date_str)
+    # one summary Mac desktop notification (details in the iPhone push / Markdown archive)
+    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
+                       for i, it in enumerate(items, 1))
+    notify_macos("📚 Today Embodied AI Top%d - %s" % (len(items), date_str),
+                 " / ".join(dict.fromkeys(it["tag"] for it in items)),
+                 titles)
     log("Done")
 
 

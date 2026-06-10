@@ -1,7 +1,7 @@
 # 📚 embodied-daily - Daily Embodied AI Paper Digest
 
 > Every morning at 9:30, automatically pull the latest **Embodied AI** papers from arXiv and use AI to pick the Top 5,
-> Generate a detailed Chinese analysis, and **push it to the iPhone** (Bark) + macOS notification + local Markdown archive.
+> Generate detailed Chinese analyses; each Top5 paper is **pushed separately to iPhone** (Bark) + **one Mac desktop summary notification** + local Markdown archive.
 > Fully unattended, no need to open any app.
 
 ---
@@ -15,7 +15,7 @@
   - Detailed Chinese summary (problem / method / novelty / results / value)
   - Key points list + direction tags
 - 💻 **Code links**: auto-extract the GitHub repo from the abstract or Papers with Code, otherwise honestly mark 'none'
-- 📲 **Multi-channel delivery**: iPhone (Bark push) + macOS desktop notification + local Markdown archive
+- 📲 **Delivered to iPhone + Mac**: each of the Top 5 gets its own detailed post (Bark), Mac shows one summary notification, and a local Markdown archive is kept
 - ⏰ **Scheduled and unattended**: macOS `launchd` runs it automatically at 9:30 daily, **no need for the terminal to be open**
 - 🛟 **Graceful degradation**: falls back to English abstracts + keyword tags when the `claude` CLI is unavailable
 
@@ -63,7 +63,7 @@ arXiv API ──▶ merge, dedupe / filter by date ──▶ claude CLI selects 
                                             │
               ┌─────────────────────────────┼──────────────────────┐
               ▼                             ▼                       ▼
-        Bark -> iPhone               macOS desktop notification           Markdown archive
+   Bark → iPhone(one detailed item per paper)        Mac desktop summary notification          Markdown archive
 ```
 
 ## 📁 Directory structure
@@ -82,7 +82,7 @@ embodied-daily/
 
 ## 📋 Dependencies
 
-- macOS (uses `launchd` and `osascript`)
+- macOS (uses `launchd` for scheduling and `osascript` for desktop notifications)
 - Python 3 (the built-in `/usr/bin/python3` is enough)
 - System `curl`
 - Optional: [`claude` CLI](https://claude.com/claude-code) (for high-quality Chinese summaries)

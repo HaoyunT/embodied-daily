@@ -1,16 +1,16 @@
 ---
 name: embodied-daily
-description: Generate/view today's Embodied AI paper digest -- fetch the latest embodied-related papers from arXiv, with Chinese summaries, arXiv links, code repos and topic tags, Top5. Can be triggered manually, and also pushes to iPhone (Bark) and macOS notifications. Use when the user says "embodied daily", "today's embodied papers" or "embodied daily digest".
+description: Generate/view today's Embodied AI paper digest -- fetch the latest embodied-AI papers from arXiv, with Chinese summaries, arXiv links, code repositories, and direction tags, Top5. Can be run manually; each paper's detailed analysis is pushed separately to iPhone (Bark), plus a summary notification on Mac. Use when the user says "daily embodied digest", "today's embodied papers", or "embodied daily".
 ---
 
 # Embodied AI Daily Digest (embodied-daily)
 
-Every day at 9:30, launchd runs `~/embodied-daily/embodied_daily.py` automatically, pushing to iPhone (Bark) + macOS notifications + archived Markdown. This skill is for **manual triggering** or **viewing/adjusting**.
+At 9:30 every day launchd automatically runs `~/embodied-daily/embodied_daily.py`, **pushing a separate detailed write-up for each of the Top5 papers to the iPhone (Bark)**, showing **one summary notification on the Mac**, and archiving it as Markdown. This skill is for **manual triggering** or **viewing and adjusting**.
 
 ## User intents and matching actions
 
 ### 1. Generate today's digest now (manually trigger the whole pipeline)
-Run the script: it fetches arXiv -> claude Chinese summaries -> pushes to Bark/macOS -> archives:
+Run the script; it fetches from arXiv → claude Chinese summaries → one Bark push per paper + one Mac summary notification → archive:
 ```bash
 /usr/bin/python3 ~/embodied-daily/embodied_daily.py
 ```
