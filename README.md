@@ -1,7 +1,7 @@
 # 📚 embodied-daily - Daily Embodied AI Paper Digest
 
-> Every morning at 9:30, automatically pull the latest **Embodied AI** papers from arXiv and use AI to pick the Top 5,
-> Generate detailed Chinese analyses; each Top5 paper is **pushed separately to iPhone** (Bark) + **one Mac desktop summary notification** + local Markdown archive.
+> Every morning at 9:30, automatically pull the latest **Embodied AI** papers from arXiv, pick the Top 10 with AI,
+> and write detailed Chinese reviews: **Mac shows all 10** (opens the Markdown digest automatically), **iPhone gets the top 5** (one Bark push each), everything archived locally.
 > Fully unattended, no need to open any app.
 
 ---
@@ -10,12 +10,12 @@
 
 - 🔍 **Auto-fetch**: multi-query search on arXiv (`cs.RO`, embodied, VLA, robot manipulation, etc.), merged and deduplicated
 - 🧠 **AI selection + commentary**: uses the local `claude` CLI (reuses your Claude subscription, **no separate API key needed**) to:
-  - Top 5 ranked by importance
+  - Top 10 ranked by importance
   - One-line highlight (TL;DR)
   - Detailed Chinese summary (problem / method / novelty / results / value)
   - Key points list + direction tags
 - 💻 **Code links**: auto-extract the GitHub repo from the abstract or Papers with Code, otherwise honestly mark 'none'
-- 📲 **Delivered to iPhone + Mac**: each of the Top 5 papers is pushed as a separate detailed commentary (Bark); Mac shows one summary notification and automatically opens the daily digest Markdown with all 5 papers, while the full text is archived locally
+- 📲 **Delivery to iPhone + Mac**: each of the **top 5** of the Top 10 gets its own detailed push to iPhone (Bark); Mac gets a summary notification and auto-opens the daily Markdown with **all 10** papers, full text archived locally too
 - ⏰ **Scheduled and unattended**: macOS `launchd` runs it automatically at 9:30 daily, **no need for the terminal to be open**
 - 🛟 **Graceful degradation**: falls back to English abstracts + keyword tags when the `claude` CLI is unavailable
 
@@ -49,37 +49,41 @@ In Claude Code you can also type `/embodied-daily` to trigger it or debug by han
 |---|---|---|
 | `bark_key` | Bark push key (required for iPhone push) | `""` |
 | `bark_server` | Bark server (change if self-hosted) | `https://api.day.app` |
-| `top_n` | Number of papers selected per day (how many get pushed in the end) | `5` |
+| `top_n` | Number of curated papers: the Mac digest / archive shows all `top_n` papers | `10` |
+| `push_n` | iPhone only receives the first `push_n` papers (≤ `top_n`) | `5` |
 | `interests` | **Personal interest preferences**: list the directions you care about; related papers are prioritized and ranked first (leave empty for no bias) | `""` |
-| `lookback_days` | Days to look back (arXiv does not update on weekends, so this is a fallback) | `3` |
+| `same_day_only` | **Same day only**: keep only papers from the most recent announcement date, never spanning multiple days (no backfilling from earlier days even if fewer than `top_n`) | `true` |
+| `lookback_days` | Takes effect when `same_day_only=false`: how many recent days to look back | `3` |
 | `max_candidates` | Max number of candidates sent to AI for curation (i.e. the "denominator") | `40` |
 | `queries` | Array of arXiv search queries | See file |
 | `use_claude_cli` | whether to use the `claude` CLI for Chinese summaries | `true` |
 | `claude_bin` | Path to the claude executable (auto-detected if empty) | `""` |
 | `open_digest` | Whether to automatically open the daily digest `latest.md` with the default app after running (Mac) | `true` |
 
-> 💡 **Personalization example**: set `interests` to `"VLA, dexterous hand manipulation, world models"` and the daily Top5 will lean toward these directions.
+> 💡 **Personalization example**: set `interests` to `"VLA, dexterous hand manipulation, world models"` and the daily Top10 will lean toward these directions.
 
-## 🔢 How Top5 is selected & ranked
+## 🔢 How the Top10 is selected & ranked (iPhone gets the first 5)
 
 Two steps:
 
 **Step 1 · Define the candidate pool (the "denominator", by time only)**
-Fetch results from multiple arXiv queries (`cs.RO` / embodied / VLA / robot manipulation), merge and dedupe, keep only papers from the last `lookback_days` (default 3) days, sort by submission time descending, and take the first `max_candidates` (default **40**) as candidates.
-→ So the **denominator defaults to at most 40 papers** (the actual count varies with how much arXiv updates that day; `candidates: N` in the run log is exactly it).
+Fetch results from multiple arXiv searches (`cs.RO` / embodied / VLA / robot manipulation), merge and dedupe. Default `same_day_only=true`, **keep only papers from the latest announcement day** (no multi-day span), sort by submission time descending, and take the first `max_candidates` (default **40**) as candidates.
+→ So the denominator = the **same-day batch** of embodied papers (that is the `same-day batch: <date> count: N` line in the run log). If `same_day_only` is off, it falls back to looking back `lookback_days` days.
 
 **Step 2 · AI curation + ranking (by "importance + relevance")**
 Send this batch of candidates' **titles + abstracts** to `claude` in one go, and have it:
-1. Pick the `top_n` (default 5) most relevant and valuable Embodied AI papers;
+1. Pick the `top_n` (default **10**) papers most relevant and valuable to Embodied AI;
 2. **Sort by importance, high to low**;
 3. If `interests` is configured, **papers relevant to your interests are picked first and ranked higher**.
+
+Final: **the Mac digest / archive shows all `top_n` (10) papers**, while **iPhone only pushes the top `push_n` (5)**.
 
 > ⚠️ **Note**: the ranking is a **subjective judgment** by `claude` based on the abstracts, not on hard metrics such as citation count, authors, or institutions. It therefore carries model subjectivity, and rerunning on the same day may slightly change the order. For more control, steer it with `interests` in `config.json`, or edit the prompt of `claude_curate()` in the script yourself.
 
 ## 🧱 How it works
 
 ```
-arXiv API ──▶ merge, dedupe / filter by date ──▶ claude CLI selects Top 5 + Chinese commentary
+arXiv API ──▶ merge/dedupe/filter by date ──▶ claude CLI curates Top10 + Chinese commentary
                                             │
               ┌─────────────────────────────┼──────────────────────┐
               ▼                             ▼                       ▼

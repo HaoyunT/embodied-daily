@@ -1,8 +1,10 @@
 {
   "bark_key": "put your Bark key here (get it after installing the Bark App on iPhone; it is the part after api.day.app/ in the URL)",
   "bark_server": "https://api.day.app",
-  "top_n": 5,
+  "top_n": 10,
+  "push_n": 5,
   "interests": "(optional) fill in the directions you care about; related papers get priority and come first, e.g.: VLA, dexterous hand manipulation, world models",
+  "same_day_only": true,
   "lookback_days": 3,
   "max_candidates": 40,
   "queries": [

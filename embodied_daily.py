@@ -31,8 +31,11 @@ ATOM = "{http://www.w3.org/2005/Atom}"
 DEFAULT_CONFIG = {
     "bark_key": "",                       # required: the key from the Bark app, e.g. XXXXXX in https://api.day.app/XXXXXX
     "bark_server": "https://api.day.app", # self-hosted Bark server can be changed
-    "top_n": 5,
-    "lookback_days": 3,                   # Fetch the last few days (arXiv does not update on weekends, default 3 as fallback)
+    "top_n": 10,                          # number of picks (Mac digest/archive shows all top_n)
+    "push_n": 5,                          # push only the first push_n papers to iPhone (<= top_n)
+    "interests": "",                      # personal interest preferences, related papers get priority and come first
+    "same_day_only": True,                # True: only push papers from the latest announce day, never span multiple days
+    "lookback_days": 3,                   # used when same_day_only=False: how many days to look back
     "max_candidates": 40,                 # max candidates sent to claude for ranking
     "queries": [
         "cat:cs.RO",
@@ -139,10 +142,20 @@ def gather_candidates(cfg):
             if p["id"] not in seen:
                 seen[p["id"]] = p
     cand = list(seen.values())
-    # Prefer items within the lookback days; fill any shortfall with older ones
-    recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
-    pool = recent if len(recent) >= cfg["top_n"] else cand
-    pool.sort(key=lambda p: p.get("published", ""), reverse=True)
+    cand.sort(key=lambda p: p.get("published", ""), reverse=True)
+    if cfg.get("same_day_only", True):
+        # same-day only: keep only papers from the latest announcement day, no multi-day span (do not backfill even if fewer than top_n)
+        dates = [p["published"][:10] for p in cand if p.get("published")]
+        if dates:
+            newest = max(dates)
+            pool = [p for p in cand if p.get("published", "")[:10] == newest]
+            log("today's batch:", newest, "papers:", len(pool))
+        else:
+            pool = cand
+    else:
+        # Look back lookback days; if fewer than top_n, backfill with older ones
+        recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
+        pool = recent if len(recent) >= cfg["top_n"] else cand
     return pool[: cfg["max_candidates"]]
 
 
@@ -440,17 +453,26 @@ def main():
     md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
-    # Also maintain a latest.md
+    # also maintain latest.md and the structured latest.json (reused by --push-only)
     with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
         f.write(md)
+    with open(os.path.join(HERE, "latest.json"), "w", encoding="utf-8") as f:
+        json.dump({"date": date_str, "items": items}, f, ensure_ascii=False, indent=2)
     log("Archived:", md_path)
 
-    # Push one full detailed analysis per paper to iPhone (N messages in total)
-    push_digest(cfg, items, date_str)
-    # one summary Mac desktop notification (details in the iPhone push / Markdown archive)
+    deliver(cfg, items, date_str)
+    log("Done")
+
+
+def deliver(cfg, items, date_str):
+    """Push/notify/open: on iPhone push only the first push_n papers; Mac notifies and opens the digest with all top_n papers"""
+    # iPhone: only push the first push_n papers (default 5); Mac/archive: all top_n papers (default 10)
+    push_n = min(int(cfg.get("push_n", 5)), len(items))
+    push_digest(cfg, items[:push_n], date_str)
+    # One combined Mac desktop notification (lists all top_n titles)
     titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
                        for i, it in enumerate(items, 1))
-    notify_macos("📚 Today Embodied AI Top%d - %s" % (len(items), date_str),
+    notify_macos("📚 Today's Embodied AI Top%d · %s (push top %d to phone)" % (len(items), date_str, push_n),
                  " / ".join(dict.fromkeys(it["tag"] for it in items)),
                  titles)
     # Open today's digest with the default program (clicking the native Mac notification does nothing, so this is a fallback)
@@ -459,12 +481,30 @@ def main():
             subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
         except Exception as e:
             log("Failed to open digest:", e)
+
+
+def push_only():
+    """Read the previously generated latest.json and re-push it directly, without re-fetching or calling claude"""
+    cfg = load_config()
+    path = os.path.join(HERE, "latest.json")
+    if not os.path.exists(path):
+        log("no latest.json found, please do a normal run first")
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    items = data.get("items", [])
+    date_str = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    log("Re-push from latest.json, paper count:", len(items))
+    deliver(cfg, items, date_str)
     log("Done")
 
 
 if __name__ == "__main__":
     try:
-        main()
+        if "--push-only" in sys.argv:
+            push_only()
+        else:
+            main()
     except Exception as e:
         log("Fatal error:", repr(e))
         sys.exit(1)
