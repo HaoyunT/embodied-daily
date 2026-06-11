@@ -247,8 +247,9 @@ def build_curate_prompt(cfg, candidates):
     interest_line = ""
     if interests:
         interest_line = (
-            "[Reader preference] My personal focus: %s. Prioritize papers related to these areas,"
-            "and rank them higher; but if other embodied work that day is clearly more important, they may still be included.\n" % interests
+            "[Reader preferences - highest to lowest priority] My main focus: %s."
+            "The earlier in the list, the higher the priority: for the direction ranked first, if there are related papers that day, be sure to include them and place them first; "
+            "Also rank related work in other directions as high as possible. But if there is clearly more important other embodied work that day, still include it.\n" % interests
         )
     head = (
         "You are a senior research assistant in the Embodied AI field, skilled at interpreting papers within their literature context (follow the PaperLocus reading style).\n"
