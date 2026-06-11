@@ -247,8 +247,9 @@ def build_curate_prompt(cfg, candidates):
     interest_line = ""
     if interests:
         interest_line = (
-            "【读者偏好】我个人重点关注: %s。与这些方向相关的论文请优先选入、"
-            "并排在更靠前的位置; 但若当天有明显更重要的其他具身工作, 仍可纳入。\n" % interests
+            "【读者偏好·按优先级从高到低】我重点关注: %s。"
+            "列表中越靠前优先级越高: 排在第一位的方向, 当天若有相关论文请务必选入并排在最前; "
+            "其余方向相关的也尽量靠前。但若当天有明显更重要的其他具身工作, 仍可纳入。\n" % interests
         )
     head = (
         "你是具身智能(Embodied AI)方向的资深科研助理, 擅长把论文放进文献脉络里解读(参考 PaperLocus 的读法)。\n"
