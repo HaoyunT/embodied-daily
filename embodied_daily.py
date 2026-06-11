@@ -268,7 +268,10 @@ def build_curate_prompt(cfg, candidates):
         "若是推断而非论文明确断言, 用\"推测/可能\"标注。\n"
         "- highlights: 2-4 条要点(数组, 每条不超过25字, 提炼关键贡献或数字结果)\n"
         "语言通俗准确, 面向有AI基础的读者, 不堆砌英文术语。\n"
-        "严格只输出一个 JSON 数组, 不要任何额外文字、不要 markdown 代码块。\n"
+        "【输出格式要求·必须严格遵守】只输出一个能被 json.loads 解析的合法 JSON 数组, "
+        "不要任何额外文字、不要 markdown 代码块。"
+        "字符串值内部禁止出现英文双引号(\")和换行符; 如需引用术语请改用中文引号「」, "
+        "英文术语/缩写直接写、不要加引号。\n"
         "格式: [{\"idx\": 候选编号(整数), \"tag\": \"...\", \"tldr\": \"...\", "
         "\"position\": \"...\", \"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
         "按重要性从高到低排序, 恰好 %d 个元素。\n\n候选列表:\n%s"
@@ -278,12 +281,23 @@ def build_curate_prompt(cfg, candidates):
 
 
 def parse_curate_response(raw, candidates, cfg):
-    """从模型原始输出里抽取 JSON 数组并清洗"""
+    """从模型原始输出里抽取 JSON 数组并清洗 (带容错修复)"""
     m = re.search(r"\[.*\]", raw, re.S)
     if not m:
         log("模型输出未找到 JSON 数组")
         return None
-    arr = json.loads(m.group(0))
+    blob = m.group(0)
+    try:
+        arr = json.loads(blob)
+    except Exception:
+        # 容错: 去掉字符串内可能未转义的裸控制符(换行/制表)再试一次
+        repaired = blob.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+        try:
+            arr = json.loads(repaired)
+            log("JSON 经容错修复后解析成功")
+        except Exception as e:
+            log("JSON 解析失败(修复后仍失败):", e)
+            return None
     cleaned = []
     for item in arr:
         idx = int(item.get("idx", -1))
@@ -313,7 +327,7 @@ def curate_via_api(cfg, candidates):
     prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
-        "max_tokens": 6000,
+        "max_tokens": 8000,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
     attempts = int(cfg.get("api_retries", 3))
