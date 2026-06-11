@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -35,6 +36,7 @@ DEFAULT_CONFIG = {
     "push_n": 5,                          # iPhone 只推送前 push_n 篇 (<= top_n)
     "interests": "",                      # 个人兴趣偏好, 相关论文优先选入并排前面
     "same_day_only": True,                # True: 只推当日(最新一个公布日)的论文, 不跨多天
+    "dedup_days": 7,                       # 排除最近 N 天已推过的论文(按存档去重), 0 关闭
     "lookback_days": 3,                   # same_day_only=False 时生效: 回看最近几天
     "max_candidates": 40,                 # 送给 claude 排序的候选上限
     "queries": [
@@ -46,6 +48,7 @@ DEFAULT_CONFIG = {
     "use_claude_cli": True,               # 用 claude(API优先, 否则CLI)做中文摘要; false 则只给英文摘要
     "api_model": "claude-sonnet-4-6",     # 云端用 Anthropic API 时的模型 (可被环境变量 ANTHROPIC_MODEL 覆盖)
     "api_base_url": "https://api.anthropic.com",  # 可被 ANTHROPIC_BASE_URL 覆盖 (第三方中转填其地址)
+    "api_retries": 3,                     # API 调用失败重试次数 (中转偶发掐连接时兜底)
     "claude_bin": "",                     # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
     "open_digest": True                   # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
 }
@@ -143,6 +146,31 @@ def recent_enough(published, lookback_days):
     return dt >= datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
 
+def recent_pushed_ids(days):
+    """从近 days 天(不含今天)的存档 md 里收集已推过的 arXiv id, 用于去重"""
+    ids = set()
+    if days <= 0 or not os.path.isdir(ARCHIVE_DIR):
+        return ids
+    today = datetime.now().date()
+    for fn in os.listdir(ARCHIVE_DIR):
+        if not fn.endswith(".md"):
+            continue
+        try:
+            d = datetime.strptime(fn[:-3], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        delta = (today - d).days
+        if 0 < delta <= days:   # 只看过去的日子, 不含今天(允许当天重跑)
+            try:
+                with open(os.path.join(ARCHIVE_DIR, fn), "r", encoding="utf-8") as f:
+                    text = f.read()
+                for mid in re.findall(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", text):
+                    ids.add(mid)
+            except Exception:
+                pass
+    return ids
+
+
 def gather_candidates(cfg):
     seen = {}
     for q in cfg["queries"]:
@@ -165,6 +193,14 @@ def gather_candidates(cfg):
         # 回看 lookback 天; 不够 top_n 再用更早的补齐
         recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
         pool = recent if len(recent) >= cfg["top_n"] else cand
+    # 去重: 排除最近 dedup_days 天已推过的论文, 保证每天都是新内容
+    dedup_days = int(cfg.get("dedup_days", 0))
+    if dedup_days > 0:
+        seen_ids = recent_pushed_ids(dedup_days)
+        before = len(pool)
+        pool = [p for p in pool if p["id"] not in seen_ids]
+        if before != len(pool):
+            log("去重: 排除近%d天已推过 %d 篇, 剩 %d 篇" % (dedup_days, before - len(pool), len(pool)))
     return pool[: cfg["max_candidates"]]
 
 
@@ -204,8 +240,8 @@ def find_claude_bin(cfg):
 def build_curate_prompt(cfg, candidates):
     """构造精选+解读 prompt (PaperLocus 风格: 文献定位 + 断言/推断区分)"""
     listing = []
-    for i, p in enumerate(candidates):
-        abs = p["summary"][:1100]
+    for i, p in enumerate(candidates[:30]):   # 最多送 30 篇候选, 控制请求体大小
+        abs = p["summary"][:800]
         listing.append("[%d] 标题: %s\n摘要: %s" % (i, p["title"], abs))
     interests = str(cfg.get("interests", "")).strip()
     interest_line = ""
@@ -267,7 +303,7 @@ def parse_curate_response(raw, candidates, cfg):
 
 
 def curate_via_api(cfg, candidates):
-    """用 Anthropic API 做精选+解读 (云端/无 claude CLI 时), 失败返回 None"""
+    """用 Anthropic API 做精选+解读 (云端/无 claude CLI 时), 带重试; 失败返回 None"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
@@ -277,22 +313,29 @@ def curate_via_api(cfg, candidates):
     prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
-        "max_tokens": 8000,
+        "max_tokens": 6000,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/v1/messages", data=payload,
-        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                 "content-type": "application/json"})
-    try:
-        log("调用 Anthropic API 生成中文摘要 (模型 %s)..." % model)
-        with urllib.request.urlopen(req, timeout=180) as r:
-            data = json.loads(r.read().decode("utf-8", "replace"))
-        raw = "".join(b.get("text", "") for b in data.get("content", []))
-        return parse_curate_response(raw, candidates, cfg)
-    except Exception as e:
-        log("Anthropic API 调用失败:", e)
-        return None
+    attempts = int(cfg.get("api_retries", 3))
+    for i in range(1, attempts + 1):
+        req = urllib.request.Request(
+            base + "/v1/messages", data=payload,
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"})
+        try:
+            log("调用 Anthropic API 生成中文摘要 (模型 %s, 第%d/%d次)..." % (model, i, attempts))
+            with urllib.request.urlopen(req, timeout=240) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            raw = "".join(b.get("text", "") for b in data.get("content", []))
+            result = parse_curate_response(raw, candidates, cfg)
+            if result:
+                return result
+            log("解析结果为空, 重试...")
+        except Exception as e:
+            log("Anthropic API 调用失败(第%d次):" % i, e)
+        if i < attempts:
+            time.sleep(5)
+    return None
 
 
 def curate_via_cli(cfg, candidates):
