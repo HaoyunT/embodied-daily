@@ -3,6 +3,7 @@
   "bark_server": "https://api.day.app",
   "top_n": 10,
   "push_n": 5,
+  "push_priority": "",
   "interests": "（可选）填你重点关注的方向，相关论文会被优先选入并排前面，例如：VLA, 灵巧手操作, 世界模型",
   "same_day_only": true,
   "lookback_days": 3,

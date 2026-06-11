@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "bark_server": "https://api.day.app", # 自建 Bark 服务器可改
     "top_n": 10,                          # 精选篇数(Mac 日报/存档展示全部 top_n 篇)
     "push_n": 5,                          # iPhone 只推送前 push_n 篇 (<= top_n)
+    "push_priority": "",                  # 手机端把 tag 含该关键词的论文排到最前(如"灵巧手"), 空则不重排
     "interests": "",                      # 个人兴趣偏好, 相关论文优先选入并排前面
     "same_day_only": True,                # True: 只推当日(最新一个公布日)的论文, 不跨多天
     "dedup_days": 7,                       # 排除最近 N 天已推过的论文(按存档去重), 0 关闭
@@ -73,6 +74,8 @@ def load_config():
         cfg["bark_server"] = os.environ["BARK_SERVER"].strip()
     if os.environ.get("EMBODIED_INTERESTS", "").strip():
         cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
+    if os.environ.get("EMBODIED_PUSH_PRIORITY", "").strip():
+        cfg["push_priority"] = os.environ["EMBODIED_PUSH_PRIORITY"].strip()
     return cfg
 
 
@@ -591,7 +594,15 @@ def deliver(cfg, items, date_str):
     """推送/通知/打开: iPhone 只推前 push_n 篇, Mac 通知+打开含全部 top_n 篇的日报"""
     # iPhone: 只推前 push_n 篇 (默认5); Mac/存档: 全部 top_n 篇 (默认10)
     push_n = min(int(cfg.get("push_n", 5)), len(items))
-    push_digest(cfg, items[:push_n], date_str)
+    # 手机端: 把指定方向(push_priority, 如"灵巧手")的论文排到最前
+    prio = str(cfg.get("push_priority", "")).strip()
+    phone_items = items
+    if prio:
+        head = [it for it in items if prio in it.get("tag", "")]
+        tail = [it for it in items if prio not in it.get("tag", "")]
+        phone_items = head + tail
+        log("手机端置顶'%s': 命中 %d 篇" % (prio, len(head)))
+    push_digest(cfg, phone_items[:push_n], date_str)
     # Mac 桌面通知一条汇总 (列出全部 top_n 篇标题)
     titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
                        for i, it in enumerate(items, 1))

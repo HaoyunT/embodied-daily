@@ -32,6 +32,7 @@ jobs:
           BARK_KEY: ${{ secrets.BARK_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           EMBODIED_INTERESTS: ${{ vars.EMBODIED_INTERESTS }}
+          EMBODIED_PUSH_PRIORITY: ${{ vars.EMBODIED_PUSH_PRIORITY }}
         run: python3 embodied_daily.py
 
       - name: 存档回提交
