@@ -9,14 +9,14 @@
 ## ✨ Features
 
 - 🔍 **Auto-fetch**: multi-query search on arXiv (`cs.RO`, embodied, VLA, robot manipulation, etc.), merged and deduplicated
-- 🧠 **AI selection + commentary**: uses the local `claude` CLI (reuses your Claude subscription, **no separate API key needed**) to:
+- 🧠 **AI-picked reviews** (PaperLocus style: literature positioning + separating paper claims from inference), using the **Anthropic API** in the cloud and the `claude` CLI locally (reuses your Claude subscription):
   - Top 10 ranked by importance
-  - One-line highlight (TL;DR)
-  - Detailed Chinese summary (problem / method / novelty / results / value)
+  - One-line highlight (TL;DR) + 🧭 literature positioning (built on A, changed B -> C)
+  - Detailed Chinese review (problem / method / novelty / results / value)
   - Key points list + direction tags
 - 💻 **Code links**: auto-extract the GitHub repo from the abstract or Papers with Code, otherwise honestly mark 'none'
 - 📲 **Delivery to iPhone + Mac**: each of the **top 5** of the Top 10 gets its own detailed push to iPhone (Bark); Mac gets a summary notification and auto-opens the daily Markdown with **all 10** papers, full text archived locally too
-- ⏰ **Scheduled and unattended**: macOS `launchd` runs it automatically at 9:30 daily, **no need for the terminal to be open**
+- ⏰ **Scheduled and unattended**: ☁️ GitHub Actions (runs even when the machine is off, recommended) or local `launchd`, runs daily at 9:30
 - 🛟 **Graceful degradation**: falls back to English abstracts + keyword tags when the `claude` CLI is unavailable
 
 ## 🚀 Install
@@ -43,6 +43,26 @@ cat archive/$(date +%F).md           # view today's digest
 
 In Claude Code you can also type `/embodied-daily` to trigger it or debug by hand.
 
+## ☁️ Cloud run (GitHub Actions, recommended: no local machine needed, works even when the Mac is off)
+
+Local `launchd` only runs when the Mac is awake and not asleep. For **a reliable daily run at 9:30 that pushes even when the machine is off**, use the bundled GitHub Actions workflow (`.github/workflows/daily.yml`, already set to 9:30 Beijing time).
+
+The cloud has no local `claude` login, so it uses the **Anthropic API** to generate the Chinese summaries (pay per use, a few cents a day).
+
+**One-time setup (on your GitHub repository page):**
+
+1. **Settings → Secrets and variables → Actions → New repository secret**, add two Secrets:
+   - `ANTHROPIC_API_KEY`: your Anthropic API key (get one at [console.anthropic.com](https://console.anthropic.com))
+   - `BARK_KEY`: your Bark push key
+2. (Optional) On the same page, under the **Variables** tab, add:
+   - `EMBODIED_INTERESTS`: interest preferences, e.g. `VLA, dexterous hands`
+   - `ANTHROPIC_MODEL`: model, defaults to `claude-sonnet-4-6`
+3. On the **Actions** page, find the 'Daily Embodied AI Digest' workflow and click **Run workflow** to run it manually once to verify.
+
+After that it runs automatically every day at 9:30 (UTC 1:30): fetch → API curation and summaries → push to iPhone → commit the archived digest of the day back to the repository.
+
+> ⚠️ Scheduled triggers on GitHub Actions may be delayed by a few minutes to tens of minutes (a platform characteristic); this is normal.
+
 ## ⚙️ Configuration options (`config.json`)
 
 | Field | Description | Default |
@@ -56,7 +76,8 @@ In Claude Code you can also type `/embodied-daily` to trigger it or debug by han
 | `lookback_days` | Takes effect when `same_day_only=false`: how many recent days to look back | `3` |
 | `max_candidates` | Max number of candidates sent to AI for curation (i.e. the "denominator") | `40` |
 | `queries` | Array of arXiv search queries | See file |
-| `use_claude_cli` | whether to use the `claude` CLI for Chinese summaries | `true` |
+| `use_claude_cli` | Whether to enable AI summaries (cloud uses the Anthropic API, local uses the `claude` CLI) | `true` |
+| `api_model` | Model used by the cloud Anthropic API (can be overridden by the `ANTHROPIC_MODEL` environment variable) | `claude-sonnet-4-6` |
 | `claude_bin` | Path to the claude executable (auto-detected if empty) | `""` |
 | `open_digest` | Whether to automatically open the daily digest `latest.md` with the default app after running (Mac) | `true` |
 

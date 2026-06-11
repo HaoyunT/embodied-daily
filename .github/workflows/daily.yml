@@ -1,0 +1,46 @@
+name: Daily Embodied AI Digest
+
+on:
+  schedule:
+    # UTC 01:30 = 09:30 Beijing time (GitHub Actions schedules may be delayed by a few minutes)
+    - cron: '30 1 * * *'
+  workflow_dispatch: {}   # Allow manual triggering from the Actions page
+
+permissions:
+  contents: write          # allow committing the daily digest archive back to the repo
+
+concurrency:
+  group: embodied-daily
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: generate and push the daily digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          EMBODIED_INTERESTS: ${{ vars.EMBODIED_INTERESTS }}
+        run: python3 embodied_daily.py
+
+      - name: archive and commit back
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add archive/*.md 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No new archive, skipping commit"
+          else
+            git commit -m "chore: daily embodied digest archive $(date -u +%F)"
+            git push
+          fi

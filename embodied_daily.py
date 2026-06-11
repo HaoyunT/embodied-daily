@@ -43,7 +43,8 @@ DEFAULT_CONFIG = {
         "all:%22vision-language-action%22",
         "all:%22robot+manipulation%22"
     ],
-    "use_claude_cli": True,               # use local claude CLI for Chinese summaries; false = English only
+    "use_claude_cli": True,               # use claude (API first, otherwise CLI) for Chinese summaries; false gives English summaries only
+    "api_model": "claude-sonnet-4-6",     # model used for the cloud Anthropic API (can be overridden by the ANTHROPIC_MODEL env var)
     "claude_bin": "",                     # leave empty to auto-detect; an absolute path also works, e.g. /Users/xxx/.local/bin/claude
     "open_digest": True                   # automatically open the day's digest latest.md with the default app after the run (Mac)
 }
@@ -61,6 +62,13 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception as e:
             log("Failed to parse config.json, using defaults:", e)
+    # Environment variable overrides (for cloud/CI without config.json)
+    if os.environ.get("BARK_KEY", "").strip():
+        cfg["bark_key"] = os.environ["BARK_KEY"].strip()
+    if os.environ.get("BARK_SERVER", "").strip():
+        cfg["bark_server"] = os.environ["BARK_SERVER"].strip()
+    if os.environ.get("EMBODIED_INTERESTS", "").strip():
+        cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
     return cfg
 
 
@@ -192,17 +200,12 @@ def find_claude_bin(cfg):
     return ""
 
 
-def claude_curate(cfg, candidates):
-    """Return [{idx, zh_summary, tag}] (idx is an index into candidates), or None on failure"""
-    claude_bin = find_claude_bin(cfg)
-    if not claude_bin:
-        log("claude CLI not found, skipping AI summaries")
-        return None
+def build_curate_prompt(cfg, candidates):
+    """Build the selection + commentary prompt (PaperLocus style: literature positioning + claim vs inference distinction)"""
     listing = []
     for i, p in enumerate(candidates):
         abs = p["summary"][:1100]
         listing.append("[%d] Title: %s\nAbstract: %s" % (i, p["title"], abs))
-    # optional: reader interests (from interests in config.json), used to shape selection and ranking
     interests = str(cfg.get("interests", "")).strip()
     interest_line = ""
     if interests:
@@ -211,25 +214,90 @@ def claude_curate(cfg, candidates):
             "and rank them higher; but if other embodied work that day is clearly more important, they may still be included.\n" % interests
         )
     head = (
-        "You are a senior research assistant in Embodied AI. Below are several arXiv paper candidates.\n"
+        "You are a senior research assistant in the Embodied AI field, skilled at interpreting papers within their literature context (follow the PaperLocus reading style).\n"
+        "Below are several arXiv paper candidates (titles and abstracts only).\n"
         "Please pick the %d most relevant and valuable papers on [Embodied AI] (covering areas such as VLA, robot manipulation/grasping,"
         "navigation, humanoid robots, dexterous hands, sim-to-real, world models, RL control, etc.).\n" % cfg["top_n"]
     )
     body = (
-        "For each paper produce a detailed write-up in Chinese, covering these fields:\n"
+        "Produce a structured Chinese analysis for each paper, including the following fields:\n"
         "- tag: short Chinese topic tag (e.g. VLA / dexterous hands / world model)\n"
         "- tldr: one-line highlight (20-30 chars, so the point is obvious at a glance)\n"
-        "- zh_summary: a detailed summary (5-8 sentences), covering in order: (1) the problem or pain point the research addresses "
-        "(2) method/core idea (3) main innovations (4) experimental results or performance (5) why it matters/application value\n"
+        "- position: paper positioning (1-2 sentences), use the frame of \"modify B on top of A, thus obtaining C\", "
+        "and state which kind of prior work/baseline it mainly compares against, and which research line it belongs to\n"
+        "- zh_summary: detailed commentary (5-8 sentences), covering in order: 1) the problem/pain point the research addresses "
+        "2) Method / core idea 3) Main innovations 4) Experimental design and key results (include numbers where available) 5) Value, scope of applicability and limitations."
+        "Use only information available in the abstracts; do not invent data, baselines, code or conclusions not mentioned; "
+        "If it is an inference rather than an explicit claim in the paper, mark it with \"speculation/possible\".\n"
         "- highlights: 2-4 key points (array, each at most 25 words, distilling key contributions or numeric results)\n"
-        "Use plain, accurate language for readers with an AI background; avoid piling up English jargon.\n"
+        "plain and accurate language for readers with an AI background, no piling up of English jargon.\n"
         "Output strictly a single JSON array, no extra text, no markdown code blocks.\n"
         "Format: [{\"idx\": candidate index (integer), \"tag\": \"...\", \"tldr\": \"...\", "
-        "\"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
+        "\"position\": \"...\", \"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
         "Sort by importance from high to low, exactly %d elements.\n\nCandidate list:\n%s"
         % (cfg["top_n"], "\n\n".join(listing))
     )
-    prompt = head + interest_line + body
+    return head + interest_line + body
+
+
+def parse_curate_response(raw, candidates, cfg):
+    """Extract the JSON array from the model raw output and clean it"""
+    m = re.search(r"\[.*\]", raw, re.S)
+    if not m:
+        log("No JSON array found in model output")
+        return None
+    arr = json.loads(m.group(0))
+    cleaned = []
+    for item in arr:
+        idx = int(item.get("idx", -1))
+        if 0 <= idx < len(candidates):
+            hl = item.get("highlights", [])
+            if not isinstance(hl, list):
+                hl = [str(hl)]
+            cleaned.append({
+                "idx": idx,
+                "tag": str(item.get("tag", "Embodied AI")).strip(),
+                "tldr": str(item.get("tldr", "")).strip(),
+                "position": str(item.get("position", "")).strip(),
+                "zh_summary": str(item.get("zh_summary", "")).strip(),
+                "highlights": [str(x).strip() for x in hl if str(x).strip()],
+            })
+    return cleaned[: cfg["top_n"]] or None
+
+
+def curate_via_api(cfg, candidates):
+    """Use the Anthropic API for curation + interpretation (cloud / no claude CLI), returns None on failure"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        return None
+    model = os.environ.get("ANTHROPIC_MODEL", cfg.get("api_model", "claude-sonnet-4-6"))
+    prompt = build_curate_prompt(cfg, candidates)
+    payload = json.dumps({
+        "model": model,
+        "max_tokens": 8000,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=payload,
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"})
+    try:
+        log("Calling Anthropic API to generate Chinese summaries (model %s)..." % model)
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        raw = "".join(b.get("text", "") for b in data.get("content", []))
+        return parse_curate_response(raw, candidates, cfg)
+    except Exception as e:
+        log("Anthropic API call failed:", e)
+        return None
+
+
+def curate_via_cli(cfg, candidates):
+    """Use the local claude CLI for selection + analysis (reuses the Claude subscription); return None on failure"""
+    claude_bin = find_claude_bin(cfg)
+    if not claude_bin:
+        return None
+    prompt = build_curate_prompt(cfg, candidates)
     try:
         log("calling claude CLI to generate Chinese summaries (may take 1-2 minutes)...")
         proc = subprocess.run(
@@ -240,33 +308,23 @@ def claude_curate(cfg, candidates):
         if proc.returncode != 0:
             log("claude CLI returned non-zero:", proc.stderr[:300])
             return None
-        raw = proc.stdout.strip()
-        m = re.search(r"\[.*\]", raw, re.S)
-        if not m:
-            log("claude output has no JSON array")
-            return None
-        arr = json.loads(m.group(0))
-        cleaned = []
-        for item in arr:
-            idx = int(item.get("idx", -1))
-            if 0 <= idx < len(candidates):
-                hl = item.get("highlights", [])
-                if not isinstance(hl, list):
-                    hl = [str(hl)]
-                cleaned.append({
-                    "idx": idx,
-                    "tag": str(item.get("tag", "embodied AI")).strip(),
-                    "tldr": str(item.get("tldr", "")).strip(),
-                    "zh_summary": str(item.get("zh_summary", "")).strip(),
-                    "highlights": [str(x).strip() for x in hl if str(x).strip()],
-                })
-        return cleaned[: cfg["top_n"]] or None
+        return parse_curate_response(proc.stdout.strip(), candidates, cfg)
     except subprocess.TimeoutExpired:
         log("claude CLI timed out")
         return None
     except Exception as e:
         log("claude CLI call failed:", e)
         return None
+
+
+def curate(cfg, candidates):
+    """Smart selection + commentary: prefer the Anthropic API (cloud), else the local claude CLI; return None if neither works"""
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        result = curate_via_api(cfg, candidates)
+        if result:
+            return result
+        log("API route failed, trying the local claude CLI...")
+    return curate_via_cli(cfg, candidates)
 
 
 KEYWORD_TAGS = [
@@ -288,7 +346,7 @@ def keyword_tag(text):
 
 
 def build_items(cfg, candidates):
-    curated = claude_curate(cfg, candidates) if cfg.get("use_claude_cli") else None
+    curated = curate(cfg, candidates) if cfg.get("use_claude_cli", True) else None
     items = []
     if curated:
         for c in curated:
@@ -297,6 +355,7 @@ def build_items(cfg, candidates):
                 "paper": p,
                 "tag": c["tag"],
                 "tldr": c.get("tldr", ""),
+                "position": c.get("position", ""),
                 "zh_summary": c["zh_summary"],
                 "highlights": c.get("highlights", []),
             })
@@ -307,6 +366,7 @@ def build_items(cfg, candidates):
                 "paper": p,
                 "tag": keyword_tag(p["title"] + " " + p["summary"]),
                 "tldr": "",
+                "position": "",
                 "zh_summary": "(AI summary not enabled) " + p["summary"][:400],
                 "highlights": [],
             })
@@ -322,7 +382,7 @@ def build_items(cfg, candidates):
 
 def render_markdown(items, date_str):
     lines = ["# Embodied AI Top%d (Today) · %s\n" % (len(items), date_str),
-             "> Daily automatic fetch of the latest Embodied AI papers from arXiv, with AI-curated commentary.\n"]
+             "> Auto-fetches the latest arXiv Embodied AI papers daily, with AI-curated reviews (PaperLocus style).\n"]
     for i, it in enumerate(items, 1):
         p = it["paper"]
         lines.append("## %d. 【%s】%s" % (i, it["tag"], p["title"]))
@@ -331,6 +391,8 @@ def render_markdown(items, date_str):
         if p.get("authors"):
             lines.append("**Authors**: " + ", ".join(p["authors"][:6]) +
                          (" et al." if len(p["authors"]) > 6 else ""))
+        if it.get("position"):
+            lines.append("\n**🧭 Literature positioning**: " + it["position"])
         lines.append("\n" + it["zh_summary"] + "\n")
         if it.get("highlights"):
             lines.append("**Highlights**:")
