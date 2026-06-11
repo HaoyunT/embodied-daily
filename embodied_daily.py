@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -35,6 +36,7 @@ DEFAULT_CONFIG = {
     "push_n": 5,                          # push only the first push_n papers to iPhone (<= top_n)
     "interests": "",                      # personal interest preferences, related papers get priority and come first
     "same_day_only": True,                # True: only push papers from the latest announce day, never span multiple days
+    "dedup_days": 7,                       # exclude papers already pushed in the last N days (dedupe by archive), 0 disables
     "lookback_days": 3,                   # used when same_day_only=False: how many days to look back
     "max_candidates": 40,                 # max candidates sent to claude for ranking
     "queries": [
@@ -46,6 +48,7 @@ DEFAULT_CONFIG = {
     "use_claude_cli": True,               # use claude (API first, otherwise CLI) for Chinese summaries; false gives English summaries only
     "api_model": "claude-sonnet-4-6",     # model used for the cloud Anthropic API (can be overridden by the ANTHROPIC_MODEL env var)
     "api_base_url": "https://api.anthropic.com",  # can be overridden by ANTHROPIC_BASE_URL (third-party relay: put its address here)
+    "api_retries": 3,                     # Retries when an API call fails (fallback for occasional dropped connections via proxy)
     "claude_bin": "",                     # leave empty to auto-detect; an absolute path also works, e.g. /Users/xxx/.local/bin/claude
     "open_digest": True                   # automatically open the day's digest latest.md with the default app after the run (Mac)
 }
@@ -143,6 +146,31 @@ def recent_enough(published, lookback_days):
     return dt >= datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
 
+def recent_pushed_ids(days):
+    """Collect arXiv ids already pushed from the archived md files of the last days (excluding today), used for deduplication"""
+    ids = set()
+    if days <= 0 or not os.path.isdir(ARCHIVE_DIR):
+        return ids
+    today = datetime.now().date()
+    for fn in os.listdir(ARCHIVE_DIR):
+        if not fn.endswith(".md"):
+            continue
+        try:
+            d = datetime.strptime(fn[:-3], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        delta = (today - d).days
+        if 0 < delta <= days:   # Past days only, excluding today (same-day rerun allowed)
+            try:
+                with open(os.path.join(ARCHIVE_DIR, fn), "r", encoding="utf-8") as f:
+                    text = f.read()
+                for mid in re.findall(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", text):
+                    ids.add(mid)
+            except Exception:
+                pass
+    return ids
+
+
 def gather_candidates(cfg):
     seen = {}
     for q in cfg["queries"]:
@@ -165,6 +193,14 @@ def gather_candidates(cfg):
         # Look back lookback days; if fewer than top_n, backfill with older ones
         recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
         pool = recent if len(recent) >= cfg["top_n"] else cand
+    # Dedupe: exclude papers already pushed in the last dedup_days days, so every day brings fresh content
+    dedup_days = int(cfg.get("dedup_days", 0))
+    if dedup_days > 0:
+        seen_ids = recent_pushed_ids(dedup_days)
+        before = len(pool)
+        pool = [p for p in pool if p["id"] not in seen_ids]
+        if before != len(pool):
+            log("dedupe: last %d days, excluded %d already-pushed papers, %d left" % (dedup_days, before - len(pool), len(pool)))
     return pool[: cfg["max_candidates"]]
 
 
@@ -204,8 +240,8 @@ def find_claude_bin(cfg):
 def build_curate_prompt(cfg, candidates):
     """Build the selection + commentary prompt (PaperLocus style: literature positioning + claim vs inference distinction)"""
     listing = []
-    for i, p in enumerate(candidates):
-        abs = p["summary"][:1100]
+    for i, p in enumerate(candidates[:30]):   # send at most 30 candidates, to keep the request body small
+        abs = p["summary"][:800]
         listing.append("[%d] Title: %s\nAbstract: %s" % (i, p["title"], abs))
     interests = str(cfg.get("interests", "")).strip()
     interest_line = ""
@@ -267,7 +303,7 @@ def parse_curate_response(raw, candidates, cfg):
 
 
 def curate_via_api(cfg, candidates):
-    """Use the Anthropic API for curation + interpretation (cloud / no claude CLI), returns None on failure"""
+    """Use the Anthropic API for selection + analysis (cloud / no claude CLI), with retries; return None on failure"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
@@ -277,22 +313,29 @@ def curate_via_api(cfg, candidates):
     prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
-        "max_tokens": 8000,
+        "max_tokens": 6000,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/v1/messages", data=payload,
-        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                 "content-type": "application/json"})
-    try:
-        log("Calling Anthropic API to generate Chinese summaries (model %s)..." % model)
-        with urllib.request.urlopen(req, timeout=180) as r:
-            data = json.loads(r.read().decode("utf-8", "replace"))
-        raw = "".join(b.get("text", "") for b in data.get("content", []))
-        return parse_curate_response(raw, candidates, cfg)
-    except Exception as e:
-        log("Anthropic API call failed:", e)
-        return None
+    attempts = int(cfg.get("api_retries", 3))
+    for i in range(1, attempts + 1):
+        req = urllib.request.Request(
+            base + "/v1/messages", data=payload,
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"})
+        try:
+            log("Calling Anthropic API to generate Chinese summary (model %s, attempt %d/%d)..." % (model, i, attempts))
+            with urllib.request.urlopen(req, timeout=240) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            raw = "".join(b.get("text", "") for b in data.get("content", []))
+            result = parse_curate_response(raw, candidates, cfg)
+            if result:
+                return result
+            log("Parsed result is empty, retrying...")
+        except Exception as e:
+            log("Anthropic API call failed (attempt %d):" % i, e)
+        if i < attempts:
+            time.sleep(5)
+    return None
 
 
 def curate_via_cli(cfg, candidates):
