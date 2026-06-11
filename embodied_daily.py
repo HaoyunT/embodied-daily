@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "bark_server": "https://api.day.app", # self-hosted Bark server can be changed
     "top_n": 10,                          # number of picks (Mac digest/archive shows all top_n)
     "push_n": 5,                          # push only the first push_n papers to iPhone (<= top_n)
+    "push_priority": "",                  # on mobile, papers whose tag contains this keyword go first (e.g. "dexterous hand"), empty means no reordering
     "interests": "",                      # personal interest preferences, related papers get priority and come first
     "same_day_only": True,                # True: only push papers from the latest announce day, never span multiple days
     "dedup_days": 7,                       # exclude papers already pushed in the last N days (dedupe by archive), 0 disables
@@ -73,6 +74,8 @@ def load_config():
         cfg["bark_server"] = os.environ["BARK_SERVER"].strip()
     if os.environ.get("EMBODIED_INTERESTS", "").strip():
         cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
+    if os.environ.get("EMBODIED_PUSH_PRIORITY", "").strip():
+        cfg["push_priority"] = os.environ["EMBODIED_PUSH_PRIORITY"].strip()
     return cfg
 
 
@@ -591,7 +594,15 @@ def deliver(cfg, items, date_str):
     """Push/notify/open: on iPhone push only the first push_n papers; Mac notifies and opens the digest with all top_n papers"""
     # iPhone: only push the first push_n papers (default 5); Mac/archive: all top_n papers (default 10)
     push_n = min(int(cfg.get("push_n", 5)), len(items))
-    push_digest(cfg, items[:push_n], date_str)
+    # phone side: put papers in the given direction (push_priority, e.g. "dexterous hands") first
+    prio = str(cfg.get("push_priority", "")).strip()
+    phone_items = items
+    if prio:
+        head = [it for it in items if prio in it.get("tag", "")]
+        tail = [it for it in items if prio not in it.get("tag", "")]
+        phone_items = head + tail
+        log("phone pinned '%s': %d papers matched" % (prio, len(head)))
+    push_digest(cfg, phone_items[:push_n], date_str)
     # One combined Mac desktop notification (lists all top_n titles)
     titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
                        for i, it in enumerate(items, 1))

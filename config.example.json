@@ -3,6 +3,7 @@
   "bark_server": "https://api.day.app",
   "top_n": 10,
   "push_n": 5,
+  "push_priority": "",
   "interests": "(optional) fill in the directions you care about; related papers get priority and come first, e.g.: VLA, dexterous hand manipulation, world models",
   "same_day_only": true,
   "lookback_days": 3,
