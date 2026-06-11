@@ -52,9 +52,10 @@ The cloud has no local `claude` login, so it uses the **Anthropic API** to gener
 **One-time setup (on your GitHub repository page):**
 
 1. **Settings → Secrets and variables → Actions → New repository secret**, add two Secrets:
-   - `ANTHROPIC_API_KEY`: your Anthropic API key (get one at [console.anthropic.com](https://console.anthropic.com))
+   - `ANTHROPIC_API_KEY`: Anthropic API key (official [console.anthropic.com](https://console.anthropic.com), or a key from a third-party relay service; the latter requires setting `ANTHROPIC_BASE_URL` under Variables)
    - `BARK_KEY`: your Bark push key
 2. (Optional) On the same page, under the **Variables** tab, add:
+   - `ANTHROPIC_BASE_URL`: **required if using a third-party relay API**, set it to the relay service address (e.g. `https://xxx.example.com`; not needed for the official API)
    - `EMBODIED_INTERESTS`: interest preferences, e.g. `VLA, dexterous hands`
    - `ANTHROPIC_MODEL`: model, defaults to `claude-sonnet-4-6`
 3. On the **Actions** page, find the 'Daily Embodied AI Digest' workflow and click **Run workflow** to run it manually once to verify.
@@ -78,6 +79,7 @@ After that it runs automatically every day at 9:30 (UTC 1:30): fetch → API cur
 | `queries` | Array of arXiv search queries | See file |
 | `use_claude_cli` | Whether to enable AI summaries (cloud uses the Anthropic API, local uses the `claude` CLI) | `true` |
 | `api_model` | Model used by the cloud Anthropic API (can be overridden by the `ANTHROPIC_MODEL` environment variable) | `claude-sonnet-4-6` |
+| `api_base_url` | API address (set to the relay address for third-party relays; can be overridden by the `ANTHROPIC_BASE_URL` environment variable) | `https://api.anthropic.com` |
 | `claude_bin` | Path to the claude executable (auto-detected if empty) | `""` |
 | `open_digest` | Whether to automatically open the daily digest `latest.md` with the default app after running (Mac) | `true` |
 

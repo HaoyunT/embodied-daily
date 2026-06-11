@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     ],
     "use_claude_cli": True,               # use claude (API first, otherwise CLI) for Chinese summaries; false gives English summaries only
     "api_model": "claude-sonnet-4-6",     # model used for the cloud Anthropic API (can be overridden by the ANTHROPIC_MODEL env var)
+    "api_base_url": "https://api.anthropic.com",  # can be overridden by ANTHROPIC_BASE_URL (third-party relay: put its address here)
     "claude_bin": "",                     # leave empty to auto-detect; an absolute path also works, e.g. /Users/xxx/.local/bin/claude
     "open_digest": True                   # automatically open the day's digest latest.md with the default app after the run (Mac)
 }
@@ -270,7 +271,9 @@ def curate_via_api(cfg, candidates):
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
-    model = os.environ.get("ANTHROPIC_MODEL", cfg.get("api_model", "claude-sonnet-4-6"))
+    model = os.environ.get("ANTHROPIC_MODEL") or cfg.get("api_model", "claude-sonnet-4-6")
+    base = (os.environ.get("ANTHROPIC_BASE_URL")
+            or cfg.get("api_base_url", "https://api.anthropic.com")).rstrip("/")
     prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
@@ -278,7 +281,7 @@ def curate_via_api(cfg, candidates):
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages", data=payload,
+        base + "/v1/messages", data=payload,
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
     try:
