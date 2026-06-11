@@ -52,9 +52,10 @@ cat archive/$(date +%F).md           # 查看今天的日报
 **一次性配置（在你的 GitHub 仓库页面）：**
 
 1. **Settings → Secrets and variables → Actions → New repository secret**，添加两个 Secret：
-   - `ANTHROPIC_API_KEY`：你的 Anthropic API key（[console.anthropic.com](https://console.anthropic.com) 获取）
+   - `ANTHROPIC_API_KEY`：Anthropic API key（官方 [console.anthropic.com](https://console.anthropic.com)，或第三方中转服务的 key——后者需在 Variables 里配 `ANTHROPIC_BASE_URL`）
    - `BARK_KEY`：你的 Bark 推送 key
 2. （可选）在同页 **Variables** 标签添加：
+   - `ANTHROPIC_BASE_URL`：**若用第三方中转 API 必填**，填中转服务的地址（如 `https://xxx.example.com`，官方则无需设置）
    - `EMBODIED_INTERESTS`：兴趣偏好，如 `VLA, 灵巧手`
    - `ANTHROPIC_MODEL`：模型，默认 `claude-sonnet-4-6`
 3. **Actions** 页面找到「每日具身智能日报」工作流，点 **Run workflow** 手动跑一次验证。
@@ -78,6 +79,7 @@ cat archive/$(date +%F).md           # 查看今天的日报
 | `queries` | arXiv 检索式数组 | 见文件 |
 | `use_claude_cli` | 是否启用 AI 摘要（云端走 Anthropic API，本机走 `claude` CLI） | `true` |
 | `api_model` | 云端 Anthropic API 用的模型（环境变量 `ANTHROPIC_MODEL` 可覆盖） | `claude-sonnet-4-6` |
+| `api_base_url` | API 地址（第三方中转填其地址，环境变量 `ANTHROPIC_BASE_URL` 可覆盖） | `https://api.anthropic.com` |
 | `claude_bin` | claude 可执行文件路径（留空自动探测） | `""` |
 | `open_digest` | 跑完后是否自动用默认程序打开当天日报 `latest.md`（Mac） | `true` |
 

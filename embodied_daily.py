@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     ],
     "use_claude_cli": True,               # 用 claude(API优先, 否则CLI)做中文摘要; false 则只给英文摘要
     "api_model": "claude-sonnet-4-6",     # 云端用 Anthropic API 时的模型 (可被环境变量 ANTHROPIC_MODEL 覆盖)
+    "api_base_url": "https://api.anthropic.com",  # 可被 ANTHROPIC_BASE_URL 覆盖 (第三方中转填其地址)
     "claude_bin": "",                     # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
     "open_digest": True                   # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
 }
@@ -270,7 +271,9 @@ def curate_via_api(cfg, candidates):
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
-    model = os.environ.get("ANTHROPIC_MODEL", cfg.get("api_model", "claude-sonnet-4-6"))
+    model = os.environ.get("ANTHROPIC_MODEL") or cfg.get("api_model", "claude-sonnet-4-6")
+    base = (os.environ.get("ANTHROPIC_BASE_URL")
+            or cfg.get("api_base_url", "https://api.anthropic.com")).rstrip("/")
     prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
@@ -278,7 +281,7 @@ def curate_via_api(cfg, candidates):
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages", data=payload,
+        base + "/v1/messages", data=payload,
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
     try:

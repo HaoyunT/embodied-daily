@@ -28,6 +28,7 @@ jobs:
       - name: 生成并推送日报
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
           BARK_KEY: ${{ secrets.BARK_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           EMBODIED_INTERESTS: ${{ vars.EMBODIED_INTERESTS }}
