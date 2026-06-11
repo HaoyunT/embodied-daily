@@ -14,6 +14,7 @@
     "all:%22robot+manipulation%22"
   ],
   "use_claude_cli": true,
+  "api_model": "claude-sonnet-4-6",
   "claude_bin": "",
   "open_digest": true
 }

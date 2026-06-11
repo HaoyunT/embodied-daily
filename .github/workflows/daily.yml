@@ -1,0 +1,46 @@
+name: 每日具身智能日报
+
+on:
+  schedule:
+    # UTC 01:30 = 北京时间 09:30 (GitHub Actions 定时可能延迟若干分钟)
+    - cron: '30 1 * * *'
+  workflow_dispatch: {}   # 支持在 Actions 页面手动触发
+
+permissions:
+  contents: write          # 允许把当天日报存档提交回仓库
+
+concurrency:
+  group: embodied-daily
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 生成并推送日报
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          EMBODIED_INTERESTS: ${{ vars.EMBODIED_INTERESTS }}
+        run: python3 embodied_daily.py
+
+      - name: 存档回提交
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add archive/*.md 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "无新增存档, 跳过提交"
+          else
+            git commit -m "chore: 每日具身日报存档 $(date -u +%F)"
+            git push
+          fi

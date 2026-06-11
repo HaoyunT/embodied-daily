@@ -9,14 +9,14 @@
 ## ✨ 特性
 
 - 🔍 **自动抓取**：从 arXiv 多路检索（`cs.RO`、embodied、VLA、robot manipulation 等）合并去重
-- 🧠 **AI 精选解读**：调用本机 `claude` CLI（复用你的 Claude 订阅，**无需单独 API key**）做：
+- 🧠 **AI 精选解读**（PaperLocus 风格：文献定位 + 区分论文断言/推断）——云端用 **Anthropic API**，本机用 `claude` CLI（复用 Claude 订阅）：
   - Top10 重要性排序
-  - 一句话亮点（TL;DR）
-  - 详细中文摘要（问题 / 方法 / 创新点 / 结果 / 价值）
+  - 一句话亮点（TL;DR）+ 🧭 文献定位（built on A, changed B → C）
+  - 详细中文解读（问题 / 方法 / 创新点 / 实验结果 / 价值）
   - 关键要点列表 + 方向标签
 - 💻 **代码链接**：自动从摘要 / Papers with Code 抽取 GitHub 仓库，没有则如实标「暂无」
 - 📲 **送达 iPhone + Mac**：精选 Top10 中**前 5 篇**每篇单独推送一条详细解读到 iPhone（Bark）；Mac 弹汇总通知并自动打开含**全部 10 篇**的日报 Markdown，全文同时本地存档
-- ⏰ **定时无人值守**：macOS `launchd` 每天 9:30 自动运行，**不依赖终端是否打开**
+- ⏰ **定时无人值守**：☁️ GitHub Actions（关机也能跑，推荐）或本机 `launchd`，每天 9:30 自动运行
 - 🛟 **优雅降级**：`claude` CLI 不可用时自动退化为英文摘要 + 关键词标签
 
 ## 🚀 安装
@@ -43,6 +43,26 @@ cat archive/$(date +%F).md           # 查看今天的日报
 
 在 Claude Code 里也可以直接 `/embodied-daily` 手动触发或排查。
 
+## ☁️ 云端运行（GitHub Actions，推荐：不依赖本机、Mac 关机也能收到）
+
+本机 `launchd` 只在 Mac 开机且未睡眠时才会运行。要做到**每天 9:30 雷打不动、关机也照推**，用仓库内置的 GitHub Actions 工作流（`.github/workflows/daily.yml`，已配置北京时间 9:30）。
+
+云端没有本机的 `claude` 登录态，因此用 **Anthropic API** 生成中文摘要（按量付费，每天约几分钱）。
+
+**一次性配置（在你的 GitHub 仓库页面）：**
+
+1. **Settings → Secrets and variables → Actions → New repository secret**，添加两个 Secret：
+   - `ANTHROPIC_API_KEY`：你的 Anthropic API key（[console.anthropic.com](https://console.anthropic.com) 获取）
+   - `BARK_KEY`：你的 Bark 推送 key
+2. （可选）在同页 **Variables** 标签添加：
+   - `EMBODIED_INTERESTS`：兴趣偏好，如 `VLA, 灵巧手`
+   - `ANTHROPIC_MODEL`：模型，默认 `claude-sonnet-4-6`
+3. **Actions** 页面找到「每日具身智能日报」工作流，点 **Run workflow** 手动跑一次验证。
+
+之后每天 9:30（UTC 1:30）自动运行：抓取 → API 精选解读 → 推送 iPhone → 把当天日报存档提交回仓库。
+
+> ⚠️ GitHub Actions 的定时触发可能延迟几分钟到几十分钟（平台特性），属正常现象。
+
 ## ⚙️ 配置项（`config.json`）
 
 | 字段 | 说明 | 默认 |
@@ -56,7 +76,8 @@ cat archive/$(date +%F).md           # 查看今天的日报
 | `lookback_days` | `same_day_only=false` 时生效：回看最近几天 | `3` |
 | `max_candidates` | 送 AI 精选的候选上限（即"分母"） | `40` |
 | `queries` | arXiv 检索式数组 | 见文件 |
-| `use_claude_cli` | 是否用 `claude` CLI 做中文摘要 | `true` |
+| `use_claude_cli` | 是否启用 AI 摘要（云端走 Anthropic API，本机走 `claude` CLI） | `true` |
+| `api_model` | 云端 Anthropic API 用的模型（环境变量 `ANTHROPIC_MODEL` 可覆盖） | `claude-sonnet-4-6` |
 | `claude_bin` | claude 可执行文件路径（留空自动探测） | `""` |
 | `open_digest` | 跑完后是否自动用默认程序打开当天日报 `latest.md`（Mac） | `true` |
 

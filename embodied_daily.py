@@ -43,7 +43,8 @@ DEFAULT_CONFIG = {
         "all:%22vision-language-action%22",
         "all:%22robot+manipulation%22"
     ],
-    "use_claude_cli": True,               # 用本机 claude CLI 做中文摘要; false 则只给英文摘要
+    "use_claude_cli": True,               # 用 claude(API优先, 否则CLI)做中文摘要; false 则只给英文摘要
+    "api_model": "claude-sonnet-4-6",     # 云端用 Anthropic API 时的模型 (可被环境变量 ANTHROPIC_MODEL 覆盖)
     "claude_bin": "",                     # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
     "open_digest": True                   # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
 }
@@ -61,6 +62,13 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception as e:
             log("config.json 解析失败, 用默认值:", e)
+    # 环境变量覆盖 (云端/CI 没有 config.json 时用)
+    if os.environ.get("BARK_KEY", "").strip():
+        cfg["bark_key"] = os.environ["BARK_KEY"].strip()
+    if os.environ.get("BARK_SERVER", "").strip():
+        cfg["bark_server"] = os.environ["BARK_SERVER"].strip()
+    if os.environ.get("EMBODIED_INTERESTS", "").strip():
+        cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
     return cfg
 
 
@@ -192,17 +200,12 @@ def find_claude_bin(cfg):
     return ""
 
 
-def claude_curate(cfg, candidates):
-    """返回 [{idx, zh_summary, tag}] (idx 指向 candidates 下标), 失败返回 None"""
-    claude_bin = find_claude_bin(cfg)
-    if not claude_bin:
-        log("未找到 claude CLI, 跳过智能摘要")
-        return None
+def build_curate_prompt(cfg, candidates):
+    """构造精选+解读 prompt (PaperLocus 风格: 文献定位 + 断言/推断区分)"""
     listing = []
     for i, p in enumerate(candidates):
         abs = p["summary"][:1100]
         listing.append("[%d] 标题: %s\n摘要: %s" % (i, p["title"], abs))
-    # 可选: 读者兴趣偏好(来自 config.json 的 interests), 用于影响精选与排序
     interests = str(cfg.get("interests", "")).strip()
     interest_line = ""
     if interests:
@@ -211,25 +214,90 @@ def claude_curate(cfg, candidates):
             "并排在更靠前的位置; 但若当天有明显更重要的其他具身工作, 仍可纳入。\n" % interests
         )
     head = (
-        "你是具身智能(Embodied AI)方向的资深科研助理。下面是若干篇 arXiv 论文候选。\n"
+        "你是具身智能(Embodied AI)方向的资深科研助理, 擅长把论文放进文献脉络里解读(参考 PaperLocus 的读法)。\n"
+        "下面是若干篇 arXiv 论文候选(仅含标题+摘要)。\n"
         "请从中挑选与【具身智能】最相关、最有价值的 %d 篇(涵盖如 VLA、机器人操作/抓取、"
         "导航、人形机器人、灵巧手、sim-to-real、世界模型、强化学习控制 等)。\n" % cfg["top_n"]
     )
     body = (
-        "对每篇产出详细的中文解读, 包含以下字段:\n"
+        "对每篇产出结构化中文解读, 包含以下字段:\n"
         "- tag: 简短中文方向标签(如 VLA / 灵巧手 / 世界模型)\n"
         "- tldr: 一句话亮点(20-30字, 让人一眼知道这篇牛在哪)\n"
-        "- zh_summary: 详细摘要(5-8句), 依次讲清楚: ①研究要解决的问题/痛点 "
-        "②采用的方法/核心思路 ③主要创新点 ④实验结果或性能 ⑤为什么重要/应用价值\n"
+        "- position: 文献定位(1-2句), 用\"在A基础上改了B, 从而得到C\"的框架, "
+        "并点明它主要在和哪类先前工作/baseline 对比、属于哪条研究脉络\n"
+        "- zh_summary: 详细解读(5-8句), 依次讲清楚: ①研究要解决的问题/痛点 "
+        "②方法/核心思路 ③主要创新点 ④实验设计与关键结果(有数字就写) ⑤价值与适用范围/局限。"
+        "只依据摘要可得的信息, 不要编造数据、baseline、代码或未提及的结论; "
+        "若是推断而非论文明确断言, 用\"推测/可能\"标注。\n"
         "- highlights: 2-4 条要点(数组, 每条不超过25字, 提炼关键贡献或数字结果)\n"
-        "语言通俗准确, 面向有AI基础的读者, 不要堆砌英文术语。\n"
+        "语言通俗准确, 面向有AI基础的读者, 不堆砌英文术语。\n"
         "严格只输出一个 JSON 数组, 不要任何额外文字、不要 markdown 代码块。\n"
         "格式: [{\"idx\": 候选编号(整数), \"tag\": \"...\", \"tldr\": \"...\", "
-        "\"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
+        "\"position\": \"...\", \"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
         "按重要性从高到低排序, 恰好 %d 个元素。\n\n候选列表:\n%s"
         % (cfg["top_n"], "\n\n".join(listing))
     )
-    prompt = head + interest_line + body
+    return head + interest_line + body
+
+
+def parse_curate_response(raw, candidates, cfg):
+    """从模型原始输出里抽取 JSON 数组并清洗"""
+    m = re.search(r"\[.*\]", raw, re.S)
+    if not m:
+        log("模型输出未找到 JSON 数组")
+        return None
+    arr = json.loads(m.group(0))
+    cleaned = []
+    for item in arr:
+        idx = int(item.get("idx", -1))
+        if 0 <= idx < len(candidates):
+            hl = item.get("highlights", [])
+            if not isinstance(hl, list):
+                hl = [str(hl)]
+            cleaned.append({
+                "idx": idx,
+                "tag": str(item.get("tag", "具身智能")).strip(),
+                "tldr": str(item.get("tldr", "")).strip(),
+                "position": str(item.get("position", "")).strip(),
+                "zh_summary": str(item.get("zh_summary", "")).strip(),
+                "highlights": [str(x).strip() for x in hl if str(x).strip()],
+            })
+    return cleaned[: cfg["top_n"]] or None
+
+
+def curate_via_api(cfg, candidates):
+    """用 Anthropic API 做精选+解读 (云端/无 claude CLI 时), 失败返回 None"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        return None
+    model = os.environ.get("ANTHROPIC_MODEL", cfg.get("api_model", "claude-sonnet-4-6"))
+    prompt = build_curate_prompt(cfg, candidates)
+    payload = json.dumps({
+        "model": model,
+        "max_tokens": 8000,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=payload,
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"})
+    try:
+        log("调用 Anthropic API 生成中文摘要 (模型 %s)..." % model)
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        raw = "".join(b.get("text", "") for b in data.get("content", []))
+        return parse_curate_response(raw, candidates, cfg)
+    except Exception as e:
+        log("Anthropic API 调用失败:", e)
+        return None
+
+
+def curate_via_cli(cfg, candidates):
+    """用本机 claude CLI 做精选+解读 (复用 Claude 订阅), 失败返回 None"""
+    claude_bin = find_claude_bin(cfg)
+    if not claude_bin:
+        return None
+    prompt = build_curate_prompt(cfg, candidates)
     try:
         log("调用 claude CLI 生成中文摘要 (可能需要 1-2 分钟)...")
         proc = subprocess.run(
@@ -240,33 +308,23 @@ def claude_curate(cfg, candidates):
         if proc.returncode != 0:
             log("claude CLI 返回非零:", proc.stderr[:300])
             return None
-        raw = proc.stdout.strip()
-        m = re.search(r"\[.*\]", raw, re.S)
-        if not m:
-            log("claude 输出未找到 JSON 数组")
-            return None
-        arr = json.loads(m.group(0))
-        cleaned = []
-        for item in arr:
-            idx = int(item.get("idx", -1))
-            if 0 <= idx < len(candidates):
-                hl = item.get("highlights", [])
-                if not isinstance(hl, list):
-                    hl = [str(hl)]
-                cleaned.append({
-                    "idx": idx,
-                    "tag": str(item.get("tag", "具身智能")).strip(),
-                    "tldr": str(item.get("tldr", "")).strip(),
-                    "zh_summary": str(item.get("zh_summary", "")).strip(),
-                    "highlights": [str(x).strip() for x in hl if str(x).strip()],
-                })
-        return cleaned[: cfg["top_n"]] or None
+        return parse_curate_response(proc.stdout.strip(), candidates, cfg)
     except subprocess.TimeoutExpired:
         log("claude CLI 超时")
         return None
     except Exception as e:
         log("claude CLI 调用异常:", e)
         return None
+
+
+def curate(cfg, candidates):
+    """智能精选+解读: 优先 Anthropic API(云端), 否则本机 claude CLI; 都不行返回 None"""
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        result = curate_via_api(cfg, candidates)
+        if result:
+            return result
+        log("API 方式失败, 尝试本机 claude CLI...")
+    return curate_via_cli(cfg, candidates)
 
 
 KEYWORD_TAGS = [
@@ -288,7 +346,7 @@ def keyword_tag(text):
 
 
 def build_items(cfg, candidates):
-    curated = claude_curate(cfg, candidates) if cfg.get("use_claude_cli") else None
+    curated = curate(cfg, candidates) if cfg.get("use_claude_cli", True) else None
     items = []
     if curated:
         for c in curated:
@@ -297,6 +355,7 @@ def build_items(cfg, candidates):
                 "paper": p,
                 "tag": c["tag"],
                 "tldr": c.get("tldr", ""),
+                "position": c.get("position", ""),
                 "zh_summary": c["zh_summary"],
                 "highlights": c.get("highlights", []),
             })
@@ -307,6 +366,7 @@ def build_items(cfg, candidates):
                 "paper": p,
                 "tag": keyword_tag(p["title"] + " " + p["summary"]),
                 "tldr": "",
+                "position": "",
                 "zh_summary": "(未启用智能摘要) " + p["summary"][:400],
                 "highlights": [],
             })
@@ -322,7 +382,7 @@ def build_items(cfg, candidates):
 
 def render_markdown(items, date_str):
     lines = ["# 今日具身智能 Top%d · %s\n" % (len(items), date_str),
-             "> 每日自动抓取 arXiv 具身智能(Embodied AI)最新论文, AI 精选解读。\n"]
+             "> 每日自动抓取 arXiv 具身智能(Embodied AI)最新论文, AI 精选解读(PaperLocus 风格)。\n"]
     for i, it in enumerate(items, 1):
         p = it["paper"]
         lines.append("## %d. 【%s】%s" % (i, it["tag"], p["title"]))
@@ -331,6 +391,8 @@ def render_markdown(items, date_str):
         if p.get("authors"):
             lines.append("**作者**: " + ", ".join(p["authors"][:6]) +
                          (" 等" if len(p["authors"]) > 6 else ""))
+        if it.get("position"):
+            lines.append("\n**🧭 文献定位**: " + it["position"])
         lines.append("\n" + it["zh_summary"] + "\n")
         if it.get("highlights"):
             lines.append("**亮点**:")
