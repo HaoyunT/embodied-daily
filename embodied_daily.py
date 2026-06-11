@@ -34,8 +34,8 @@ DEFAULT_CONFIG = {
     "bark_server": "https://api.day.app", # self-hosted Bark server can be changed
     "top_n": 10,                          # number of picks (Mac digest/archive shows all top_n)
     "push_n": 5,                          # push only the first push_n papers to iPhone (<= top_n)
-    "push_priority": "",                  # on mobile, papers whose tag contains this keyword go first (e.g. "dexterous hand"), empty means no reordering
-    "interests": "",                      # personal interest preferences, related papers get priority and come first
+    "push_priority": "dexterous hand",            # On mobile, rank papers whose tag contains this keyword first; leave empty to skip reordering
+    "interests": "dexterous hand, world model, robot arm/manipulation, VLA (vision-language-action)",  # interests in priority order, earlier means higher priority
     "same_day_only": True,                # True: only push papers from the latest announce day, never span multiple days
     "dedup_days": 7,                       # exclude papers already pushed in the last N days (dedupe by archive), 0 disables
     "lookback_days": 3,                   # used when same_day_only=False: how many days to look back
