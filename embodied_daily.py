@@ -34,8 +34,8 @@ DEFAULT_CONFIG = {
     "bark_server": "https://api.day.app", # 自建 Bark 服务器可改
     "top_n": 10,                          # 精选篇数(Mac 日报/存档展示全部 top_n 篇)
     "push_n": 5,                          # iPhone 只推送前 push_n 篇 (<= top_n)
-    "push_priority": "",                  # 手机端把 tag 含该关键词的论文排到最前(如"灵巧手"), 空则不重排
-    "interests": "",                      # 个人兴趣偏好, 相关论文优先选入并排前面
+    "push_priority": "灵巧手",            # 手机端把 tag 含该关键词的论文排到最前, 空则不重排
+    "interests": "灵巧手(dexterous hand), 世界模型(world model), 机械臂/机器人操作(manipulation), VLA(vision-language-action)",  # 兴趣按优先级, 越靠前越优先
     "same_day_only": True,                # True: 只推当日(最新一个公布日)的论文, 不跨多天
     "dedup_days": 7,                       # 排除最近 N 天已推过的论文(按存档去重), 0 关闭
     "lookback_days": 3,                   # same_day_only=False 时生效: 回看最近几天
