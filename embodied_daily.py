@@ -268,7 +268,10 @@ def build_curate_prompt(cfg, candidates):
         "If it is an inference rather than an explicit claim in the paper, mark it with \"speculation/possible\".\n"
         "- highlights: 2-4 key points (array, each at most 25 words, distilling key contributions or numeric results)\n"
         "plain and accurate language for readers with an AI background, no piling up of English jargon.\n"
-        "Output strictly a single JSON array, no extra text, no markdown code blocks.\n"
+        "[Output format requirement - must follow strictly] Output only one valid JSON array that can be parsed by json.loads, "
+        "no extra text, no markdown code blocks."
+        "Inside string values, English double quotes (\") and newlines are forbidden; to quote a term, use single quotes '' instead, "
+        "Write English terms/abbreviations as-is, without quotes.\n"
         "Format: [{\"idx\": candidate index (integer), \"tag\": \"...\", \"tldr\": \"...\", "
         "\"position\": \"...\", \"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
         "Sort by importance from high to low, exactly %d elements.\n\nCandidate list:\n%s"
@@ -278,12 +281,23 @@ def build_curate_prompt(cfg, candidates):
 
 
 def parse_curate_response(raw, candidates, cfg):
-    """Extract the JSON array from the model raw output and clean it"""
+    """Extract the JSON array from the raw model output and clean it (with tolerant repair)"""
     m = re.search(r"\[.*\]", raw, re.S)
     if not m:
         log("No JSON array found in model output")
         return None
-    arr = json.loads(m.group(0))
+    blob = m.group(0)
+    try:
+        arr = json.loads(blob)
+    except Exception:
+        # Fault tolerance: strip bare control chars (newline/tab) that may be unescaped in the string, then retry
+        repaired = blob.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+        try:
+            arr = json.loads(repaired)
+            log("JSON parsed successfully after fault-tolerant repair")
+        except Exception as e:
+            log("JSON parse failed (still failing after repair):", e)
+            return None
     cleaned = []
     for item in arr:
         idx = int(item.get("idx", -1))
@@ -313,7 +327,7 @@ def curate_via_api(cfg, candidates):
     prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
-        "max_tokens": 6000,
+        "max_tokens": 8000,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
     attempts = int(cfg.get("api_retries", 3))
