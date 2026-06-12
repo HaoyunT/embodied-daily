@@ -21,6 +21,11 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+import email.mime.multipart
+import email.mime.text
+import email.mime.application
+import smtplib
+import ssl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -51,7 +56,13 @@ DEFAULT_CONFIG = {
     "api_base_url": "https://api.anthropic.com",  # can be overridden by ANTHROPIC_BASE_URL (third-party relay: put its address here)
     "api_retries": 3,                     # Retries when an API call fails (fallback for occasional dropped connections via proxy)
     "claude_bin": "",                     # leave empty to auto-detect; an absolute path also works, e.g. /Users/xxx/.local/bin/claude
-    "open_digest": True                   # automatically open the day's digest latest.md with the default app after the run (Mac)
+    "open_digest": True,                  # after the run, open today's digest latest.md with the default app (Mac)
+    "email_to": "",                       # recipient email; if set, generate a PDF and send it; separate multiple with commas
+    "email_from": "",                     # sender email (SMTP account)
+    "smtp_host": "",                      # SMTP server, e.g. smtp.qq.com / smtp.gmail.com
+    "smtp_port": 465,                     # SMTP port (465=SSL, 587=STARTTLS)
+    "smtp_password": "",                  # SMTP password/app code (can be overridden by the SMTP_PASSWORD env var)
+    "smtp_use_ssl": True                  # True for SSL(465), False for STARTTLS(587)
 }
 
 
@@ -76,6 +87,8 @@ def load_config():
         cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
     if os.environ.get("EMBODIED_PUSH_PRIORITY", "").strip():
         cfg["push_priority"] = os.environ["EMBODIED_PUSH_PRIORITY"].strip()
+    if os.environ.get("SMTP_PASSWORD", "").strip():
+        cfg["smtp_password"] = os.environ["SMTP_PASSWORD"].strip()
     return cfg
 
 
@@ -536,6 +549,124 @@ def notify_macos(title, subtitle, msg):
         log("macOS notification failed:", e)
 
 
+# ---------------- PDF generation + email sending ----------------
+
+def _md_to_pdf(md_path, pdf_path):
+    """Markdown -> HTML attachment"""
+    html_path = pdf_path.replace(".pdf", ".html")
+    try:
+        with open(md_path, "r", encoding="utf-8") as f:
+            md_content = f.read()
+        html_content = _simple_md_to_html(md_content)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        return html_path
+    except Exception as e:
+        log("HTML generation failed:", e)
+    return False
+
+
+def _simple_md_to_html(md_text):
+    """Minimal Markdown -> HTML (headings/bold/links/lists), no third-party dependencies"""
+    lines = md_text.split("\n")
+    html_lines = ['<html><head><meta charset="utf-8"><style>',
+                  'body{font-family:"PingFang SC",sans-serif;margin:2em;line-height:1.6}',
+                  'h1{color:#333;border-bottom:2px solid #ddd;padding-bottom:0.3em}',
+                  'h2{color:#555;margin-top:1.5em}',
+                  'a{color:#0066cc}',
+                  'blockquote{border-left:3px solid #ccc;padding-left:1em;color:#666}',
+                  '</style></head><body>']
+    for line in lines:
+        if line.startswith("# "):
+            html_lines.append("<h1>%s</h1>" % _esc(line[2:]))
+        elif line.startswith("## "):
+            html_lines.append("<h2>%s</h2>" % _esc(line[3:]))
+        elif line.startswith("> "):
+            html_lines.append("<blockquote>%s</blockquote>" % _inline(line[2:]))
+        elif line.startswith("- "):
+            html_lines.append("<li>%s</li>" % _inline(line[2:]))
+        elif line.strip() == "":
+            html_lines.append("<br>")
+        else:
+            html_lines.append("<p>%s</p>" % _inline(line))
+    html_lines.append("</body></html>")
+    return "\n".join(html_lines)
+
+
+def _esc(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _inline(s):
+    s = _esc(s)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', s)
+    return s
+
+
+def send_email_with_pdf(cfg, md_path, date_str, subject_prefix="📚 Today in Embodied AI"):
+    """Generate a PDF and send it to the configured email address via SMTP"""
+    email_to = cfg.get("email_to", "").strip()
+    if not email_to:
+        return
+    email_from = cfg.get("email_from", "").strip()
+    smtp_host = cfg.get("smtp_host", "").strip()
+    smtp_password = cfg.get("smtp_password", "").strip()
+    if not all([email_from, smtp_host, smtp_password]):
+        log("incomplete email config (need email_from, smtp_host, smtp_password), skipping email send")
+        return
+
+    # Generate PDF
+    pdf_path = md_path.replace(".md", ".pdf")
+    result = _md_to_pdf(md_path, pdf_path)
+    if result is True:
+        att_path = pdf_path
+    elif isinstance(result, str):
+        # returned the HTML path
+        att_path = result
+        log("PDF generation failed, sending HTML as attachment instead")
+    else:
+        att_path = md_path
+        log("Both PDF and HTML generation failed, sending Markdown source as attachment")
+
+    # build the email
+    msg = email.mime.multipart.MIMEMultipart()
+    subject = "%s · %s" % (subject_prefix, date_str)
+    msg["Subject"] = subject
+    msg["From"] = email_from
+    recipients = [e.strip() for e in email_to.split(",") if e.strip()]
+    msg["To"] = ", ".join(recipients)
+
+    # body: a short hint
+    body_text = "Embodied AI paper digest generated, see attachment.\n\nDate: %s" % date_str
+    msg.attach(email.mime.text.MIMEText(body_text, "plain", "utf-8"))
+
+    # Attachments
+    att_name = os.path.basename(att_path)
+    with open(att_path, "rb") as f:
+        att = email.mime.application.MIMEApplication(f.read(), Name=att_name)
+    att["Content-Disposition"] = 'attachment; filename="%s"' % att_name
+    msg.attach(att)
+
+    # Send
+    smtp_port = int(cfg.get("smtp_port", 465))
+    use_ssl = cfg.get("smtp_use_ssl", True)
+    try:
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=30) as server:
+                server.login(email_from, smtp_password)
+                server.sendmail(email_from, recipients, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+                server.starttls(context=ssl.create_default_context())
+                server.login(email_from, smtp_password)
+                server.sendmail(email_from, recipients, msg.as_string())
+        log("Email sent: %s -> %s" % (att_name, email_to))
+    except Exception as e:
+        log("Failed to send email:", e)
+
+
 def push_digest(cfg, items, date_str):
     """Push one full detailed write-up per paper (N total, each within the Bark limit)"""
     if not cfg.get("bark_key", "").strip():
@@ -561,9 +692,183 @@ def push_digest(cfg, items, date_str):
         push_bark(cfg, title, "\n".join(lines))
 
 
+def _weekday_pushed_ids(archive_dir, here, week_dates, push_n):
+    """collect ids of papers pushed to the phone on weekdays this week (first push_n papers each day)"""
+    ids = set()
+    for d in week_dates:
+        date_s = d.strftime("%Y-%m-%d")
+        json_path = os.path.join(archive_dir, date_s + ".json")
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                items = data.get("items", [])
+                for it in items[:push_n]:
+                    pid = it.get("paper", {}).get("id", "")
+                    if pid:
+                        ids.add(pid)
+                continue
+            except Exception:
+                pass
+        # json missing, take first push_n arXiv ids from md as already pushed
+        md_path = os.path.join(archive_dir, date_s + ".md")
+        if os.path.exists(md_path):
+            try:
+                with open(md_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                found = re.findall(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", text)
+                for mid in found[:push_n]:
+                    ids.add(mid)
+            except Exception:
+                pass
+    return ids
+
+
+def _weekday_all_items(archive_dir, here, week_dates):
+    """Load all paper entries from this week's weekday archive json; if the json does not exist, fall back to extracting basic info from the md"""
+    all_items = []
+    seen_ids = set()
+    for d in week_dates:
+        date_s = d.strftime("%Y-%m-%d")
+        json_path = os.path.join(archive_dir, date_s + ".json")
+        md_path = os.path.join(archive_dir, date_s + ".md")
+        # Prefer reading json
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for it in data.get("items", []):
+                    pid = it.get("paper", {}).get("id", "")
+                    if pid and pid not in seen_ids:
+                        seen_ids.add(pid)
+                        all_items.append(it)
+                continue
+            except Exception:
+                pass
+        # json not found, fall back to extracting basic info from md
+        if os.path.exists(md_path):
+            try:
+                with open(md_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                # extract each paper's title, tags, arXiv link, and abstract paragraph
+                blocks = re.split(r"^## \d+\.", text, flags=re.MULTILINE)[1:]
+                for block in blocks:
+                    tag_m = re.search(r"【(.+?)】(.+?)$", block.strip().split("\n")[0])
+                    tag = tag_m.group(1) if tag_m else "embodied AI"
+                    title = tag_m.group(2).strip() if tag_m else ""
+                    aid_m = re.search(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", block)
+                    aid = aid_m.group(1) if aid_m else ""
+                    if not aid or aid in seen_ids:
+                        continue
+                    seen_ids.add(aid)
+                    tldr_m = re.search(r"💡\s*(.+)", block)
+                    tldr = tldr_m.group(1).strip() if tldr_m else ""
+                    # extract summary text (zh_summary): paragraph after the paper positioning and before the highlights
+                    summary_m = re.search(r"\n\n(.+?)\n\n\*\*Highlights", block, re.S)
+                    zh_summary = summary_m.group(1).strip() if summary_m else ""
+                    all_items.append({
+                        "paper": {
+                            "id": aid,
+                            "title": title,
+                            "abs_url": "https://arxiv.org/abs/" + aid,
+                            "pdf_url": "https://arxiv.org/pdf/" + aid,
+                            "authors": [],
+                            "summary": "",
+                            "published": "",
+                            "github": "",
+                        },
+                        "tag": tag,
+                        "tldr": tldr,
+                        "position": "",
+                        "zh_summary": zh_summary or "(restored from archived md, see the original paper for the full summary)",
+                        "highlights": [],
+                        "code": "N/A",
+                    })
+            except Exception:
+                pass
+    return all_items
+
+
+def weekend_digest(cfg):
+    """Weekend mode: select papers not yet pushed from this week Monday-Friday archives and push them"""
+    today = datetime.now().date()
+    weekday = today.weekday()  # 5=Saturday, 6=Sunday
+
+    # compute the dates from Monday to Friday of this week
+    monday = today - timedelta(days=weekday - 0) if weekday >= 5 else today - timedelta(days=weekday)
+    week_dates = [monday + timedelta(days=i) for i in range(5)]  # Mon-Fri
+    log("Weekend mode: picking papers from archives of this week %s ~ %s" % (week_dates[0], week_dates[-1]))
+
+    # Collect ids of papers already pushed to the phone each weekday (first push_n per day)
+    push_n = int(cfg.get("push_n", 5))
+    pushed_ids = _weekday_pushed_ids(ARCHIVE_DIR, HERE, week_dates, push_n)
+    log("Papers pushed this week:", len(pushed_ids))
+
+    # load all archived papers from this week
+    all_items = _weekday_all_items(ARCHIVE_DIR, HERE, week_dates)
+    log("Total papers archived this week:", len(all_items))
+
+    if not all_items:
+        push_bark(cfg, "📚 Weekend embodied review", "no archived papers to review this week")
+        log("No archive, exiting")
+        return
+
+    # Filter out ones already pushed
+    remaining = [it for it in all_items
+                 if it.get("paper", {}).get("id", "") not in pushed_ids]
+    log("Remaining after removing pushed:", len(remaining))
+
+    if not remaining:
+        push_bark(cfg, "📚 Weekend Embodied Recap", "All papers from this week were already pushed, nothing new~")
+        log("All already pushed, exiting")
+        return
+
+    # take push_n papers to push
+    push_n = min(int(cfg.get("push_n", 5)), len(remaining))
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # sort by interest priority (push_priority field first)
+    prio = str(cfg.get("push_priority", "")).strip()
+    if prio:
+        head = [it for it in remaining if prio in it.get("tag", "")]
+        tail = [it for it in remaining if prio not in it.get("tag", "")]
+        remaining = head + tail
+
+    selected = remaining[:push_n]
+    log("Weekend push: %d papers" % len(selected))
+
+    # Push to phone
+    push_digest(cfg, selected, date_str + " (Weekend Recap)")
+
+    # Mac notification
+    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
+                       for i, it in enumerate(selected, 1))
+    notify_macos("📚 Weekend embodied review · %s (picked from papers not pushed this week)" % date_str,
+                 " / ".join(dict.fromkeys(it["tag"] for it in selected)),
+                 titles)
+
+    # save weekend review (does not overwrite weekday files, uses a separate filename)
+    md = render_markdown(selected, date_str + " (Weekend Review)")
+    md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(md)
+    with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
+        f.write(md)
+    log("Weekend review archived:", md_path)
+    # generate PDF and send email
+    send_email_with_pdf(cfg, md_path, date_str + " (Weekend review)", "📚 Weekend Embodied Review")
+
+
 def main():
     cfg = load_config()
     date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # weekend check: arXiv does not update on Saturday (5) / Sunday (6); instead pick papers not yet pushed from this week archive
+    if datetime.now().weekday() >= 5:
+        log("It is the weekend, arXiv does not update, entering weekend review mode")
+        weekend_digest(cfg)
+        return
+
     log("Fetching candidates...")
     candidates = gather_candidates(cfg)
     log("candidate count:", len(candidates))
@@ -579,6 +884,10 @@ def main():
     md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
+    # Also save a json copy under archive/ each day for structured reads in the weekend review
+    json_archive_path = os.path.join(ARCHIVE_DIR, date_str + ".json")
+    with open(json_archive_path, "w", encoding="utf-8") as f:
+        json.dump({"date": date_str, "items": items}, f, ensure_ascii=False, indent=2)
     # also maintain latest.md and the structured latest.json (reused by --push-only)
     with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
         f.write(md)
@@ -615,6 +924,8 @@ def deliver(cfg, items, date_str):
             subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
         except Exception as e:
             log("Failed to open digest:", e)
+    # generate PDF and send email
+    send_email_with_pdf(cfg, os.path.join(HERE, "latest.md"), date_str)
 
 
 def push_only():
