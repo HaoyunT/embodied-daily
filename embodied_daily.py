@@ -21,6 +21,11 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+import email.mime.multipart
+import email.mime.text
+import email.mime.application
+import smtplib
+import ssl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -51,7 +56,13 @@ DEFAULT_CONFIG = {
     "api_base_url": "https://api.anthropic.com",  # 可被 ANTHROPIC_BASE_URL 覆盖 (第三方中转填其地址)
     "api_retries": 3,                     # API 调用失败重试次数 (中转偶发掐连接时兜底)
     "claude_bin": "",                     # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
-    "open_digest": True                   # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
+    "open_digest": True,                  # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
+    "email_to": "",                       # 收件邮箱, 非空则生成 PDF 并发送; 多个逗号分隔
+    "email_from": "",                     # 发件邮箱 (SMTP 账号)
+    "smtp_host": "",                      # SMTP 服务器, 如 smtp.qq.com / smtp.gmail.com
+    "smtp_port": 465,                     # SMTP 端口 (465=SSL, 587=STARTTLS)
+    "smtp_password": "",                  # SMTP 密码/授权码 (可用环境变量 SMTP_PASSWORD 覆盖)
+    "smtp_use_ssl": True                  # True 用 SSL(465), False 用 STARTTLS(587)
 }
 
 
@@ -76,6 +87,8 @@ def load_config():
         cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
     if os.environ.get("EMBODIED_PUSH_PRIORITY", "").strip():
         cfg["push_priority"] = os.environ["EMBODIED_PUSH_PRIORITY"].strip()
+    if os.environ.get("SMTP_PASSWORD", "").strip():
+        cfg["smtp_password"] = os.environ["SMTP_PASSWORD"].strip()
     return cfg
 
 
@@ -536,6 +549,124 @@ def notify_macos(title, subtitle, msg):
         log("macOS 通知失败:", e)
 
 
+# ---------------- PDF 生成 + 邮件发送 ----------------
+
+def _md_to_pdf(md_path, pdf_path):
+    """Markdown → HTML 附件"""
+    html_path = pdf_path.replace(".pdf", ".html")
+    try:
+        with open(md_path, "r", encoding="utf-8") as f:
+            md_content = f.read()
+        html_content = _simple_md_to_html(md_content)
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        return html_path
+    except Exception as e:
+        log("HTML 生成失败:", e)
+    return False
+
+
+def _simple_md_to_html(md_text):
+    """极简 Markdown → HTML (标题/加粗/链接/列表), 不依赖第三方库"""
+    lines = md_text.split("\n")
+    html_lines = ['<html><head><meta charset="utf-8"><style>',
+                  'body{font-family:"PingFang SC",sans-serif;margin:2em;line-height:1.6}',
+                  'h1{color:#333;border-bottom:2px solid #ddd;padding-bottom:0.3em}',
+                  'h2{color:#555;margin-top:1.5em}',
+                  'a{color:#0066cc}',
+                  'blockquote{border-left:3px solid #ccc;padding-left:1em;color:#666}',
+                  '</style></head><body>']
+    for line in lines:
+        if line.startswith("# "):
+            html_lines.append("<h1>%s</h1>" % _esc(line[2:]))
+        elif line.startswith("## "):
+            html_lines.append("<h2>%s</h2>" % _esc(line[3:]))
+        elif line.startswith("> "):
+            html_lines.append("<blockquote>%s</blockquote>" % _inline(line[2:]))
+        elif line.startswith("- "):
+            html_lines.append("<li>%s</li>" % _inline(line[2:]))
+        elif line.strip() == "":
+            html_lines.append("<br>")
+        else:
+            html_lines.append("<p>%s</p>" % _inline(line))
+    html_lines.append("</body></html>")
+    return "\n".join(html_lines)
+
+
+def _esc(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _inline(s):
+    s = _esc(s)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', s)
+    return s
+
+
+def send_email_with_pdf(cfg, md_path, date_str, subject_prefix="📚 今日具身智能"):
+    """生成 PDF 并通过 SMTP 发送到配置的邮箱"""
+    email_to = cfg.get("email_to", "").strip()
+    if not email_to:
+        return
+    email_from = cfg.get("email_from", "").strip()
+    smtp_host = cfg.get("smtp_host", "").strip()
+    smtp_password = cfg.get("smtp_password", "").strip()
+    if not all([email_from, smtp_host, smtp_password]):
+        log("邮件配置不完整 (需要 email_from, smtp_host, smtp_password), 跳过邮件发送")
+        return
+
+    # 生成 PDF
+    pdf_path = md_path.replace(".md", ".pdf")
+    result = _md_to_pdf(md_path, pdf_path)
+    if result is True:
+        att_path = pdf_path
+    elif isinstance(result, str):
+        # 返回了 HTML 路径
+        att_path = result
+        log("PDF 生成失败, 改为附件发送 HTML")
+    else:
+        att_path = md_path
+        log("PDF/HTML 生成均失败, 附件发送 Markdown 原文")
+
+    # 构造邮件
+    msg = email.mime.multipart.MIMEMultipart()
+    subject = "%s · %s" % (subject_prefix, date_str)
+    msg["Subject"] = subject
+    msg["From"] = email_from
+    recipients = [e.strip() for e in email_to.split(",") if e.strip()]
+    msg["To"] = ", ".join(recipients)
+
+    # 正文: 简短提示
+    body_text = "具身智能论文日报已生成，详见附件。\n\n日期: %s" % date_str
+    msg.attach(email.mime.text.MIMEText(body_text, "plain", "utf-8"))
+
+    # 附件
+    att_name = os.path.basename(att_path)
+    with open(att_path, "rb") as f:
+        att = email.mime.application.MIMEApplication(f.read(), Name=att_name)
+    att["Content-Disposition"] = 'attachment; filename="%s"' % att_name
+    msg.attach(att)
+
+    # 发送
+    smtp_port = int(cfg.get("smtp_port", 465))
+    use_ssl = cfg.get("smtp_use_ssl", True)
+    try:
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=30) as server:
+                server.login(email_from, smtp_password)
+                server.sendmail(email_from, recipients, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+                server.starttls(context=ssl.create_default_context())
+                server.login(email_from, smtp_password)
+                server.sendmail(email_from, recipients, msg.as_string())
+        log("邮件发送成功: %s → %s" % (att_name, email_to))
+    except Exception as e:
+        log("邮件发送失败:", e)
+
+
 def push_digest(cfg, items, date_str):
     """每篇论文单独推一条完整详细解读 (共 N 条, 每条都在 Bark 上限内)"""
     if not cfg.get("bark_key", "").strip():
@@ -561,9 +692,183 @@ def push_digest(cfg, items, date_str):
         push_bark(cfg, title, "\n".join(lines))
 
 
+def _weekday_pushed_ids(archive_dir, here, week_dates, push_n):
+    """收集本周工作日已推送到手机的论文 id (每天前 push_n 篇)"""
+    ids = set()
+    for d in week_dates:
+        date_s = d.strftime("%Y-%m-%d")
+        json_path = os.path.join(archive_dir, date_s + ".json")
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                items = data.get("items", [])
+                for it in items[:push_n]:
+                    pid = it.get("paper", {}).get("id", "")
+                    if pid:
+                        ids.add(pid)
+                continue
+            except Exception:
+                pass
+        # json 不存在, 从 md 中取前 push_n 个 arXiv id 作为已推送
+        md_path = os.path.join(archive_dir, date_s + ".md")
+        if os.path.exists(md_path):
+            try:
+                with open(md_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                found = re.findall(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", text)
+                for mid in found[:push_n]:
+                    ids.add(mid)
+            except Exception:
+                pass
+    return ids
+
+
+def _weekday_all_items(archive_dir, here, week_dates):
+    """从本周工作日的存档 json 中加载所有论文条目; json 不存在则从 md 中提取基本信息兜底"""
+    all_items = []
+    seen_ids = set()
+    for d in week_dates:
+        date_s = d.strftime("%Y-%m-%d")
+        json_path = os.path.join(archive_dir, date_s + ".json")
+        md_path = os.path.join(archive_dir, date_s + ".md")
+        # 优先读 json
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for it in data.get("items", []):
+                    pid = it.get("paper", {}).get("id", "")
+                    if pid and pid not in seen_ids:
+                        seen_ids.add(pid)
+                        all_items.append(it)
+                continue
+            except Exception:
+                pass
+        # json 不存在, 从 md 里提取基本信息兜底
+        if os.path.exists(md_path):
+            try:
+                with open(md_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                # 提取每篇论文的标题、标签、arXiv链接、摘要段落
+                blocks = re.split(r"^## \d+\.", text, flags=re.MULTILINE)[1:]
+                for block in blocks:
+                    tag_m = re.search(r"【(.+?)】(.+?)$", block.strip().split("\n")[0])
+                    tag = tag_m.group(1) if tag_m else "具身智能"
+                    title = tag_m.group(2).strip() if tag_m else ""
+                    aid_m = re.search(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", block)
+                    aid = aid_m.group(1) if aid_m else ""
+                    if not aid or aid in seen_ids:
+                        continue
+                    seen_ids.add(aid)
+                    tldr_m = re.search(r"💡\s*(.+)", block)
+                    tldr = tldr_m.group(1).strip() if tldr_m else ""
+                    # 提取摘要内容 (zh_summary): 文献定位之后、亮点之前的段落
+                    summary_m = re.search(r"\n\n(.+?)\n\n\*\*亮点", block, re.S)
+                    zh_summary = summary_m.group(1).strip() if summary_m else ""
+                    all_items.append({
+                        "paper": {
+                            "id": aid,
+                            "title": title,
+                            "abs_url": "https://arxiv.org/abs/" + aid,
+                            "pdf_url": "https://arxiv.org/pdf/" + aid,
+                            "authors": [],
+                            "summary": "",
+                            "published": "",
+                            "github": "",
+                        },
+                        "tag": tag,
+                        "tldr": tldr,
+                        "position": "",
+                        "zh_summary": zh_summary or "(从存档 md 恢复, 详细摘要请查看原文)",
+                        "highlights": [],
+                        "code": "暂无",
+                    })
+            except Exception:
+                pass
+    return all_items
+
+
+def weekend_digest(cfg):
+    """周末模式: 从本周一~周五的存档中选出未推送过的论文推送"""
+    today = datetime.now().date()
+    weekday = today.weekday()  # 5=Saturday, 6=Sunday
+
+    # 计算本周一到周五的日期
+    monday = today - timedelta(days=weekday - 0) if weekday >= 5 else today - timedelta(days=weekday)
+    week_dates = [monday + timedelta(days=i) for i in range(5)]  # Mon-Fri
+    log("周末模式: 从本周 %s ~ %s 的存档中选论文" % (week_dates[0], week_dates[-1]))
+
+    # 收集工作日每天已推送到手机的论文 id (每天前 push_n 篇)
+    push_n = int(cfg.get("push_n", 5))
+    pushed_ids = _weekday_pushed_ids(ARCHIVE_DIR, HERE, week_dates, push_n)
+    log("本周工作日已推送论文数:", len(pushed_ids))
+
+    # 加载本周所有存档论文
+    all_items = _weekday_all_items(ARCHIVE_DIR, HERE, week_dates)
+    log("本周存档总论文数:", len(all_items))
+
+    if not all_items:
+        push_bark(cfg, "📚 周末具身回顾", "本周无存档论文可回顾")
+        log("无存档, 退出")
+        return
+
+    # 过滤掉已推送过的
+    remaining = [it for it in all_items
+                 if it.get("paper", {}).get("id", "") not in pushed_ids]
+    log("去除已推送后剩余:", len(remaining))
+
+    if not remaining:
+        push_bark(cfg, "📚 周末具身回顾", "本周论文已全部推送过, 无新内容~")
+        log("全部已推过, 退出")
+        return
+
+    # 取 push_n 篇推送
+    push_n = min(int(cfg.get("push_n", 5)), len(remaining))
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 按兴趣优先级排序 (push_priority 字段优先)
+    prio = str(cfg.get("push_priority", "")).strip()
+    if prio:
+        head = [it for it in remaining if prio in it.get("tag", "")]
+        tail = [it for it in remaining if prio not in it.get("tag", "")]
+        remaining = head + tail
+
+    selected = remaining[:push_n]
+    log("周末推送 %d 篇" % len(selected))
+
+    # 推送到手机
+    push_digest(cfg, selected, date_str + " (周末回顾)")
+
+    # Mac 通知
+    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
+                       for i, it in enumerate(selected, 1))
+    notify_macos("📚 周末具身回顾 · %s (从本周未推送论文中选)" % date_str,
+                 " / ".join(dict.fromkeys(it["tag"] for it in selected)),
+                 titles)
+
+    # 存档周末回顾 (不覆盖工作日的, 用单独文件名)
+    md = render_markdown(selected, date_str + " (周末回顾)")
+    md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(md)
+    with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
+        f.write(md)
+    log("周末回顾已存档:", md_path)
+    # 生成 PDF 并发送邮件
+    send_email_with_pdf(cfg, md_path, date_str + " (周末回顾)", "📚 周末具身回顾")
+
+
 def main():
     cfg = load_config()
     date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 周末检测: 周六(5)/周日(6) arXiv 不更新, 改为从本周存档中选未推送过的论文
+    if datetime.now().weekday() >= 5:
+        log("今天是周末, arXiv 不更新, 进入周末回顾模式")
+        weekend_digest(cfg)
+        return
+
     log("开始抓取候选...")
     candidates = gather_candidates(cfg)
     log("候选数:", len(candidates))
@@ -579,6 +884,10 @@ def main():
     md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
+    # 每天在 archive/ 也存一份 json, 供周末回顾结构化读取
+    json_archive_path = os.path.join(ARCHIVE_DIR, date_str + ".json")
+    with open(json_archive_path, "w", encoding="utf-8") as f:
+        json.dump({"date": date_str, "items": items}, f, ensure_ascii=False, indent=2)
     # 同时维护 latest.md 与结构化的 latest.json (供 --push-only 复用)
     with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
         f.write(md)
@@ -615,6 +924,8 @@ def deliver(cfg, items, date_str):
             subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
         except Exception as e:
             log("打开日报失败:", e)
+    # 生成 PDF 并发送邮件
+    send_email_with_pdf(cfg, os.path.join(HERE, "latest.md"), date_str)
 
 
 def push_only():
