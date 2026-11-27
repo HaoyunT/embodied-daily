@@ -1,13 +1,13 @@
-name: 每日具身智能日报
+name: Embodied AI Daily
 
 on:
   schedule:
-    # UTC 01:30 = 北京时间 09:30 (GitHub Actions 定时可能延迟若干分钟)
+    # 01:30 UTC = 09:30 Beijing time (scheduled runs may be delayed by GitHub)
     - cron: '30 1 * * *'
-  workflow_dispatch: {}   # 支持在 Actions 页面手动触发
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 permissions:
-  contents: write          # 允许把当天日报存档提交回仓库
+  contents: write          # commit the day's archive back to the repo
 
 concurrency:
   group: embodied-daily
@@ -20,29 +20,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: 生成并推送日报
+      - name: Generate and deliver digest
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
-          BARK_KEY: ${{ secrets.BARK_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO: ${{ vars.EMAIL_TO }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
           EMBODIED_INTERESTS: ${{ vars.EMBODIED_INTERESTS }}
           EMBODIED_PUSH_PRIORITY: ${{ vars.EMBODIED_PUSH_PRIORITY }}
+          EMBODIED_LANGUAGE: ${{ vars.EMBODIED_LANGUAGE }}
         run: python3 embodied_daily.py
 
-      - name: 存档回提交
+      - name: Commit archive
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add archive/*.md 2>/dev/null || true
           if git diff --cached --quiet; then
-            echo "无新增存档, 跳过提交"
+            echo "No new archive, skipping commit"
           else
-            git commit -m "chore: 每日具身日报存档 $(date -u +%F)"
+            git commit -m "chore: archive embodied daily digest $(date -u +%F)"
             git push
           fi

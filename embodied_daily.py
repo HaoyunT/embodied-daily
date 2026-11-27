@@ -1,68 +1,92 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-每日具身智能(Embodied AI)论文日报
-- 从 arXiv 抓取最近的具身相关论文
-- 调用本机 claude CLI 做中文摘要 / 方向标签 / Top5 排序 (复用 Claude 订阅, 无需 API key)
-- 抽取代码仓库链接 (摘要中的 GitHub / Papers with Code 兜底)
-- 推送到 iPhone(Bark) + macOS 通知, 并存档为 Markdown
+embodied-daily: a daily digest of new Embodied AI papers from arXiv.
 
-依赖: 仅 Python 标准库 + 系统 curl。可选 claude CLI。
-配置: 同目录 config.json
+Pipeline:
+  1. Fetch the latest embodied-AI-related papers from several arXiv queries.
+  2. Ask Claude (Anthropic API, or the local `claude` CLI) to pick the top N,
+     rank them, and write a structured digest for each paper.
+  3. Find code links (GitHub URL in the abstract, Papers with Code fallback).
+  4. Deliver: Bark push to iPhone, macOS notification, optional email,
+     and a Markdown archive under archive/.
+
+Dependencies: Python 3 standard library + system `curl`. The `claude` CLI is optional.
+Configuration: config.json next to this file, overridable by environment variables
+(see config.example.json and README.md).
 """
 
+import argparse
+import email.mime.application
+import email.mime.multipart
+import email.mime.text
 import json
 import os
 import re
+import smtplib
+import ssl
 import subprocess
 import sys
 import time
-import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-import email.mime.multipart
-import email.mime.text
-import email.mime.application
-import smtplib
-import ssl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 ARCHIVE_DIR = os.path.join(HERE, "archive")
 LOG_PREFIX = "[embodied-daily]"
+IS_MACOS = sys.platform == "darwin"
 
 ATOM = "{http://www.w3.org/2005/Atom}"
+ARXIV_ID_RE = r"arxiv\.org/abs/([0-9]+\.[0-9]+)"
+DEFAULT_TAG = "Embodied AI"
+NO_CODE = "N/A"
+ARXIV_DELAY_S = 3  # arXiv asks for ~3 s between API calls
 
 DEFAULT_CONFIG = {
-    "bark_key": "",                       # 必填: Bark App 里那串 key, 例如 https://api.day.app/XXXXXX 的 XXXXXX
-    "bark_server": "https://api.day.app", # 自建 Bark 服务器可改
-    "top_n": 10,                          # 精选篇数(Mac 日报/存档展示全部 top_n 篇)
-    "push_n": 5,                          # iPhone 只推送前 push_n 篇 (<= top_n)
-    "push_priority": "灵巧手",            # 手机端把 tag 含该关键词的论文排到最前, 空则不重排
-    "interests": "灵巧手(dexterous hand), 世界模型(world model), 机械臂/机器人操作(manipulation), VLA(vision-language-action)",  # 兴趣按优先级, 越靠前越优先
-    "same_day_only": True,                # True: 只推当日(最新一个公布日)的论文, 不跨多天
-    "dedup_days": 7,                       # 排除最近 N 天已推过的论文(按存档去重), 0 关闭
-    "lookback_days": 3,                   # same_day_only=False 时生效: 回看最近几天
-    "max_candidates": 40,                 # 送给 claude 排序的候选上限
+    "bark_key": "",                        # Bark device key: the XXXXXX in https://api.day.app/XXXXXX
+    "bark_server": "https://api.day.app",  # change if you self-host Bark
+    "top_n": 10,                           # papers selected per day (all shown in the Markdown digest)
+    "push_n": 5,                           # only the first push_n papers are pushed to the phone (<= top_n)
+    "push_priority": "",                   # phone push: papers whose tag contains this keyword go first
+    "interests": "",                       # research interests, highest priority first, e.g. "VLA, dexterous hands"
+    "language": "English",                 # language of the generated digest, e.g. "English", "Chinese"
+    "same_day_only": True,                 # only keep papers from the newest arXiv announcement day
+    "dedup_days": 7,                       # skip papers already archived in the last N days; 0 disables
+    "lookback_days": 3,                    # used when same_day_only is false
+    "max_candidates": 40,                  # size of the candidate pool sent to the model
     "queries": [
         "cat:cs.RO",
         "all:embodied",
         "all:%22vision-language-action%22",
         "all:%22robot+manipulation%22"
     ],
-    "use_claude_cli": True,               # 用 claude(API优先, 否则CLI)做中文摘要; false 则只给英文摘要
-    "api_model": "claude-sonnet-4-6",     # 云端用 Anthropic API 时的模型 (可被环境变量 ANTHROPIC_MODEL 覆盖)
-    "api_base_url": "https://api.anthropic.com",  # 可被 ANTHROPIC_BASE_URL 覆盖 (第三方中转填其地址)
-    "api_retries": 3,                     # API 调用失败重试次数 (中转偶发掐连接时兜底)
-    "claude_bin": "",                     # 留空自动探测; 也可写绝对路径如 /Users/xxx/.local/bin/claude
-    "open_digest": True,                  # 跑完后自动用默认程序打开当天日报 latest.md (Mac)
-    "email_to": "",                       # 收件邮箱, 非空则生成 PDF 并发送; 多个逗号分隔
-    "email_from": "",                     # 发件邮箱 (SMTP 账号)
-    "smtp_host": "",                      # SMTP 服务器, 如 smtp.qq.com / smtp.gmail.com
-    "smtp_port": 465,                     # SMTP 端口 (465=SSL, 587=STARTTLS)
-    "smtp_password": "",                  # SMTP 密码/授权码 (可用环境变量 SMTP_PASSWORD 覆盖)
-    "smtp_use_ssl": True                  # True 用 SSL(465), False 用 STARTTLS(587)
+    "use_claude_cli": True,                # enable AI curation (API first, then local CLI); false = abstracts only
+    "api_model": "claude-sonnet-4-6",      # overridable by ANTHROPIC_MODEL
+    "api_base_url": "https://api.anthropic.com",  # overridable by ANTHROPIC_BASE_URL
+    "api_retries": 3,                      # retries for flaky API connections
+    "claude_bin": "",                      # path to the claude CLI; empty = auto-detect
+    "open_digest": True,                   # macOS: open latest.md after a run
+    "email_to": "",                        # comma-separated recipients; non-empty enables email delivery
+    "email_from": "",                      # SMTP account / sender address
+    "smtp_host": "",                       # e.g. smtp.gmail.com
+    "smtp_port": 465,                      # 465 = SSL, 587 = STARTTLS
+    "smtp_password": "",                   # prefer the SMTP_PASSWORD env var
+    "smtp_use_ssl": True                   # True = SSL (465), False = STARTTLS (587)
+}
+
+# Environment variable -> config key (used by CI, where there is no config.json).
+ENV_OVERRIDES = {
+    "BARK_KEY": "bark_key",
+    "BARK_SERVER": "bark_server",
+    "EMBODIED_INTERESTS": "interests",
+    "EMBODIED_PUSH_PRIORITY": "push_priority",
+    "EMBODIED_LANGUAGE": "language",
+    "EMAIL_TO": "email_to",
+    "EMAIL_FROM": "email_from",
+    "SMTP_HOST": "smtp_host",
+    "SMTP_PASSWORD": "smtp_password",
 }
 
 
@@ -70,25 +94,18 @@ def log(*a):
     print(LOG_PREFIX, datetime.now().strftime("%H:%M:%S"), *a, flush=True)
 
 
-def load_config():
+def load_config(path=CONFIG_PATH):
     cfg = dict(DEFAULT_CONFIG)
-    if os.path.exists(CONFIG_PATH):
+    if os.path.exists(path):
         try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 cfg.update(json.load(f))
         except Exception as e:
-            log("config.json 解析失败, 用默认值:", e)
-    # 环境变量覆盖 (云端/CI 没有 config.json 时用)
-    if os.environ.get("BARK_KEY", "").strip():
-        cfg["bark_key"] = os.environ["BARK_KEY"].strip()
-    if os.environ.get("BARK_SERVER", "").strip():
-        cfg["bark_server"] = os.environ["BARK_SERVER"].strip()
-    if os.environ.get("EMBODIED_INTERESTS", "").strip():
-        cfg["interests"] = os.environ["EMBODIED_INTERESTS"].strip()
-    if os.environ.get("EMBODIED_PUSH_PRIORITY", "").strip():
-        cfg["push_priority"] = os.environ["EMBODIED_PUSH_PRIORITY"].strip()
-    if os.environ.get("SMTP_PASSWORD", "").strip():
-        cfg["smtp_password"] = os.environ["SMTP_PASSWORD"].strip()
+            log("Failed to parse config.json, using defaults:", e)
+    for env, key in ENV_OVERRIDES.items():
+        val = os.environ.get(env, "").strip()
+        if val:
+            cfg[key] = val
     return cfg
 
 
@@ -98,7 +115,7 @@ def http_get(url, timeout=30):
         return r.read().decode("utf-8", "replace")
 
 
-# ---------------- arXiv 抓取 ----------------
+# ---------------- arXiv fetching ----------------
 
 def fetch_query(query, max_results):
     url = (
@@ -108,7 +125,7 @@ def fetch_query(query, max_results):
     try:
         return http_get(url)
     except Exception as e:
-        log("arXiv 查询失败:", query, e)
+        log("arXiv query failed:", query, e)
         return ""
 
 
@@ -119,18 +136,17 @@ def parse_atom(xml_text):
     try:
         root = ET.fromstring(xml_text)
     except Exception as e:
-        log("XML 解析失败:", e)
+        log("Failed to parse arXiv XML:", e)
         return out
     for entry in root.findall(ATOM + "entry"):
         def text(tag):
             el = entry.find(ATOM + tag)
             return (el.text or "").strip() if el is not None else ""
         arxiv_url = text("id")
-        m = re.search(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", arxiv_url)
+        m = re.search(ARXIV_ID_RE, arxiv_url)
         aid = m.group(1) if m else arxiv_url
         title = re.sub(r"\s+", " ", text("title")).strip()
         summary = re.sub(r"\s+", " ", text("summary")).strip()
-        published = text("published")
         authors = [a.findtext(ATOM + "name", "").strip()
                    for a in entry.findall(ATOM + "author")]
         pdf_url = ""
@@ -145,7 +161,7 @@ def parse_atom(xml_text):
             "id": aid,
             "title": title,
             "summary": summary,
-            "published": published,
+            "published": text("published"),
             "authors": authors,
             "abs_url": "https://arxiv.org/abs/" + aid if m else arxiv_url,
             "pdf_url": pdf_url,
@@ -162,26 +178,23 @@ def recent_enough(published, lookback_days):
     return dt >= datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
 
-def recent_pushed_ids(days):
-    """从近 days 天(不含今天)的存档 md 里收集已推过的 arXiv id, 用于去重"""
+def recent_pushed_ids(days, archive_dir=ARCHIVE_DIR, today=None):
+    """arXiv ids found in archives from the last `days` days (excluding today), for dedup."""
     ids = set()
-    if days <= 0 or not os.path.isdir(ARCHIVE_DIR):
+    if days <= 0 or not os.path.isdir(archive_dir):
         return ids
-    today = datetime.now().date()
-    for fn in os.listdir(ARCHIVE_DIR):
+    today = today or datetime.now().date()
+    for fn in os.listdir(archive_dir):
         if not fn.endswith(".md"):
             continue
         try:
             d = datetime.strptime(fn[:-3], "%Y-%m-%d").date()
-        except Exception:
+        except ValueError:
             continue
-        delta = (today - d).days
-        if 0 < delta <= days:   # 只看过去的日子, 不含今天(允许当天重跑)
+        if 0 < (today - d).days <= days:  # past days only, so re-running today still works
             try:
-                with open(os.path.join(ARCHIVE_DIR, fn), "r", encoding="utf-8") as f:
-                    text = f.read()
-                for mid in re.findall(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", text):
-                    ids.add(mid)
+                with open(os.path.join(archive_dir, fn), "r", encoding="utf-8") as f:
+                    ids.update(re.findall(ARXIV_ID_RE, f.read()))
             except Exception:
                 pass
     return ids
@@ -189,44 +202,42 @@ def recent_pushed_ids(days):
 
 def gather_candidates(cfg):
     seen = {}
-    for q in cfg["queries"]:
-        papers = parse_atom(fetch_query(q, cfg["max_candidates"]))
-        for p in papers:
-            if p["id"] not in seen:
-                seen[p["id"]] = p
-    cand = list(seen.values())
-    cand.sort(key=lambda p: p.get("published", ""), reverse=True)
+    for i, q in enumerate(cfg["queries"]):
+        if i:
+            time.sleep(ARXIV_DELAY_S)  # arXiv API etiquette: avoids HTTP 429
+        for p in parse_atom(fetch_query(q, cfg["max_candidates"])):
+            seen.setdefault(p["id"], p)
+    cand = sorted(seen.values(), key=lambda p: p.get("published", ""), reverse=True)
     if cfg.get("same_day_only", True):
-        # 限定当日: 只保留最新一个公布日的论文, 不跨多天 (即使不足 top_n 也不向前补)
+        # Keep only the newest announcement day; never backfill from earlier days.
         dates = [p["published"][:10] for p in cand if p.get("published")]
         if dates:
             newest = max(dates)
             pool = [p for p in cand if p.get("published", "")[:10] == newest]
-            log("当日批次:", newest, "篇数:", len(pool))
+            log("Newest batch:", newest, "papers:", len(pool))
         else:
             pool = cand
     else:
-        # 回看 lookback 天; 不够 top_n 再用更早的补齐
+        # Look back lookback_days; if that is not enough, fall back to everything fetched.
         recent = [p for p in cand if recent_enough(p["published"], cfg["lookback_days"])]
         pool = recent if len(recent) >= cfg["top_n"] else cand
-    # 去重: 排除最近 dedup_days 天已推过的论文, 保证每天都是新内容
     dedup_days = int(cfg.get("dedup_days", 0))
     if dedup_days > 0:
         seen_ids = recent_pushed_ids(dedup_days)
         before = len(pool)
         pool = [p for p in pool if p["id"] not in seen_ids]
         if before != len(pool):
-            log("去重: 排除近%d天已推过 %d 篇, 剩 %d 篇" % (dedup_days, before - len(pool), len(pool)))
+            log("Dedup: dropped %d papers seen in the last %d days, %d left"
+                % (before - len(pool), dedup_days, len(pool)))
     return pool[: cfg["max_candidates"]]
 
 
-# ---------------- Papers with Code 兜底找代码 ----------------
+# ---------------- Papers with Code fallback ----------------
 
 def pwc_code(arxiv_id):
     try:
         url = "https://paperswithcode.com/api/v1/papers/%s/repositories/" % arxiv_id
-        data = json.loads(http_get(url, timeout=15))
-        results = data.get("results") or []
+        results = json.loads(http_get(url, timeout=15)).get("results") or []
         if results:
             return results[0].get("url", "")
     except Exception:
@@ -234,7 +245,7 @@ def pwc_code(arxiv_id):
     return ""
 
 
-# ---------------- claude CLI 中文摘要/标签/排序 ----------------
+# ---------------- Claude curation ----------------
 
 def find_claude_bin(cfg):
     if cfg.get("claude_bin"):
@@ -243,7 +254,6 @@ def find_claude_bin(cfg):
               "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]:
         if os.path.exists(p):
             return p
-    # PATH 探测
     try:
         out = subprocess.run(["which", "claude"], capture_output=True, text=True, timeout=10)
         if out.returncode == 0 and out.stdout.strip():
@@ -254,98 +264,104 @@ def find_claude_bin(cfg):
 
 
 def build_curate_prompt(cfg, candidates):
-    """构造精选+解读 prompt (PaperLocus 风格: 文献定位 + 断言/推断区分)"""
+    """Curation prompt: select + rank + digest, positioning each paper in the literature."""
     listing = []
-    for i, p in enumerate(candidates[:30]):   # 最多送 30 篇候选, 控制请求体大小
-        abs = p["summary"][:800]
-        listing.append("[%d] 标题: %s\n摘要: %s" % (i, p["title"], abs))
+    for i, p in enumerate(candidates[:30]):  # cap at 30 candidates to bound the request size
+        listing.append("[%d] Title: %s\nAbstract: %s" % (i, p["title"], p["summary"][:800]))
+    language = str(cfg.get("language") or "English").strip()
     interests = str(cfg.get("interests", "")).strip()
     interest_line = ""
     if interests:
         interest_line = (
-            "【读者偏好·按优先级从高到低】我重点关注: %s。"
-            "列表中越靠前优先级越高: 排在第一位的方向, 当天若有相关论文请务必选入并排在最前; "
-            "其余方向相关的也尽量靠前。但若当天有明显更重要的其他具身工作, 仍可纳入。\n" % interests
+            "Reader interests, highest priority first: %s. "
+            "If there are papers on the first interest today, include them and rank them at the top; "
+            "papers on the other interests should also rank high. Clearly more important embodied-AI "
+            "work on other topics may still be included.\n" % interests
         )
     head = (
-        "你是具身智能(Embodied AI)方向的资深科研助理, 擅长把论文放进文献脉络里解读(参考 PaperLocus 的读法)。\n"
-        "下面是若干篇 arXiv 论文候选(仅含标题+摘要)。\n"
-        "请从中挑选与【具身智能】最相关、最有价值的 %d 篇(涵盖如 VLA、机器人操作/抓取、"
-        "导航、人形机器人、灵巧手、sim-to-real、世界模型、强化学习控制 等)。\n" % cfg["top_n"]
+        "You are a senior research assistant in Embodied AI who explains papers by placing them "
+        "in the context of prior work.\n"
+        "Below are arXiv paper candidates (title + abstract only).\n"
+        "Select the %d papers most relevant and valuable to Embodied AI (e.g. VLA, robot "
+        "manipulation/grasping, navigation, humanoids, dexterous hands, sim-to-real, world models, "
+        "RL for control).\n" % cfg["top_n"]
     )
     body = (
-        "对每篇产出结构化中文解读, 包含以下字段:\n"
-        "- tag: 简短中文方向标签(如 VLA / 灵巧手 / 世界模型)\n"
-        "- tldr: 一句话亮点(20-30字, 让人一眼知道这篇牛在哪)\n"
-        "- position: 文献定位(1-2句), 用\"在A基础上改了B, 从而得到C\"的框架, "
-        "并点明它主要在和哪类先前工作/baseline 对比、属于哪条研究脉络\n"
-        "- zh_summary: 详细解读(5-8句), 依次讲清楚: ①研究要解决的问题/痛点 "
-        "②方法/核心思路 ③主要创新点 ④实验设计与关键结果(有数字就写) ⑤价值与适用范围/局限。"
-        "只依据摘要可得的信息, 不要编造数据、baseline、代码或未提及的结论; "
-        "若是推断而非论文明确断言, 用\"推测/可能\"标注。\n"
-        "- highlights: 2-4 条要点(数组, 每条不超过25字, 提炼关键贡献或数字结果)\n"
-        "语言通俗准确, 面向有AI基础的读者, 不堆砌英文术语。\n"
-        "【输出格式要求·必须严格遵守】只输出一个能被 json.loads 解析的合法 JSON 数组, "
-        "不要任何额外文字、不要 markdown 代码块。"
-        "字符串值内部禁止出现英文双引号(\")和换行符; 如需引用术语请改用中文引号「」, "
-        "英文术语/缩写直接写、不要加引号。\n"
-        "格式: [{\"idx\": 候选编号(整数), \"tag\": \"...\", \"tldr\": \"...\", "
-        "\"position\": \"...\", \"zh_summary\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
-        "按重要性从高到低排序, 恰好 %d 个元素。\n\n候选列表:\n%s"
-        % (cfg["top_n"], "\n\n".join(listing))
+        "For each selected paper, produce a structured digest with these fields:\n"
+        "- tag: a short research-area tag (e.g. VLA / Dexterous Hands / World Models)\n"
+        "- tldr: a one-sentence highlight (at most ~25 words) that says why the paper matters\n"
+        "- position: 1-2 sentences placing it in the literature, framed as \"builds on A, changes B, "
+        "achieving C\", naming which prior work / baselines it is compared against\n"
+        "- digest: a detailed explanation (5-8 sentences) covering in order: (1) the problem, "
+        "(2) the method, (3) the key novelty, (4) experiments and key results (include numbers if "
+        "given), (5) value, scope and limitations. Use only information available in the abstract; "
+        "do not invent numbers, baselines, code or conclusions. Mark inferences that the paper does "
+        "not state explicitly with \"likely\" or \"possibly\".\n"
+        "- highlights: 2-4 bullet points (array, each at most ~15 words) with key contributions or "
+        "numeric results\n"
+        "Write every text field in %s, clearly and accurately, for readers with an AI background.\n"
+        "OUTPUT FORMAT (strict): output only a single JSON array parseable by json.loads, with no "
+        "other text and no markdown code fences. String values must not contain double quotes or "
+        "newlines; use single quotes if you need to quote a term.\n"
+        "Format: [{\"idx\": candidate number (integer), \"tag\": \"...\", \"tldr\": \"...\", "
+        "\"position\": \"...\", \"digest\": \"...\", \"highlights\": [\"...\", \"...\"]}]\n"
+        "Order by importance, most important first, with exactly %d elements.\n\nCandidates:\n%s"
+        % (language, cfg["top_n"], "\n\n".join(listing))
     )
     return head + interest_line + body
 
 
 def parse_curate_response(raw, candidates, cfg):
-    """从模型原始输出里抽取 JSON 数组并清洗 (带容错修复)"""
+    """Extract and clean the JSON array from raw model output (with light repair)."""
     m = re.search(r"\[.*\]", raw, re.S)
     if not m:
-        log("模型输出未找到 JSON 数组")
+        log("No JSON array found in model output")
         return None
     blob = m.group(0)
     try:
         arr = json.loads(blob)
     except Exception:
-        # 容错: 去掉字符串内可能未转义的裸控制符(换行/制表)再试一次
+        # Repair: drop raw control characters (newlines/tabs) inside strings and retry.
         repaired = blob.replace("\r", " ").replace("\n", " ").replace("\t", " ")
         try:
             arr = json.loads(repaired)
-            log("JSON 经容错修复后解析成功")
+            log("JSON parsed after repair")
         except Exception as e:
-            log("JSON 解析失败(修复后仍失败):", e)
+            log("JSON parse failed even after repair:", e)
             return None
     cleaned = []
     for item in arr:
-        idx = int(item.get("idx", -1))
+        try:
+            idx = int(item.get("idx", -1))
+        except (TypeError, ValueError):
+            continue
         if 0 <= idx < len(candidates):
             hl = item.get("highlights", [])
             if not isinstance(hl, list):
                 hl = [str(hl)]
             cleaned.append({
                 "idx": idx,
-                "tag": str(item.get("tag", "具身智能")).strip(),
+                "tag": str(item.get("tag", DEFAULT_TAG)).strip(),
                 "tldr": str(item.get("tldr", "")).strip(),
                 "position": str(item.get("position", "")).strip(),
-                "zh_summary": str(item.get("zh_summary", "")).strip(),
+                "digest": str(item.get("digest") or item.get("zh_summary") or "").strip(),
                 "highlights": [str(x).strip() for x in hl if str(x).strip()],
             })
     return cleaned[: cfg["top_n"]] or None
 
 
 def curate_via_api(cfg, candidates):
-    """用 Anthropic API 做精选+解读 (云端/无 claude CLI 时), 带重试; 失败返回 None"""
+    """Curate with the Anthropic Messages API (CI / no CLI), with retries. Returns None on failure."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
     model = os.environ.get("ANTHROPIC_MODEL") or cfg.get("api_model", "claude-sonnet-4-6")
     base = (os.environ.get("ANTHROPIC_BASE_URL")
             or cfg.get("api_base_url", "https://api.anthropic.com")).rstrip("/")
-    prompt = build_curate_prompt(cfg, candidates)
     payload = json.dumps({
         "model": model,
         "max_tokens": 8000,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": build_curate_prompt(cfg, candidates)}],
     }).encode("utf-8")
     attempts = int(cfg.get("api_retries", 3))
     for i in range(1, attempts + 1):
@@ -354,63 +370,62 @@ def curate_via_api(cfg, candidates):
             headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                      "content-type": "application/json"})
         try:
-            log("调用 Anthropic API 生成中文摘要 (模型 %s, 第%d/%d次)..." % (model, i, attempts))
+            log("Calling Anthropic API (model %s, attempt %d/%d)..." % (model, i, attempts))
             with urllib.request.urlopen(req, timeout=240) as r:
                 data = json.loads(r.read().decode("utf-8", "replace"))
             raw = "".join(b.get("text", "") for b in data.get("content", []))
             result = parse_curate_response(raw, candidates, cfg)
             if result:
                 return result
-            log("解析结果为空, 重试...")
+            log("Empty parse result, retrying...")
         except Exception as e:
-            log("Anthropic API 调用失败(第%d次):" % i, e)
+            log("Anthropic API call failed (attempt %d):" % i, e)
         if i < attempts:
             time.sleep(5)
     return None
 
 
 def curate_via_cli(cfg, candidates):
-    """用本机 claude CLI 做精选+解读 (复用 Claude 订阅), 失败返回 None"""
+    """Curate with the local `claude` CLI (uses your Claude login). Returns None on failure."""
     claude_bin = find_claude_bin(cfg)
     if not claude_bin:
         return None
-    prompt = build_curate_prompt(cfg, candidates)
     try:
-        log("调用 claude CLI 生成中文摘要 (可能需要 1-2 分钟)...")
+        log("Calling claude CLI (may take 1-2 minutes)...")
         proc = subprocess.run(
-            [claude_bin, "-p", prompt],
+            [claude_bin, "-p", build_curate_prompt(cfg, candidates)],
             capture_output=True, text=True, timeout=300,
             env={**os.environ, "HOME": os.path.expanduser("~")},
         )
         if proc.returncode != 0:
-            log("claude CLI 返回非零:", proc.stderr[:300])
+            log("claude CLI exited non-zero:", proc.stderr[:300])
             return None
         return parse_curate_response(proc.stdout.strip(), candidates, cfg)
     except subprocess.TimeoutExpired:
-        log("claude CLI 超时")
+        log("claude CLI timed out")
         return None
     except Exception as e:
-        log("claude CLI 调用异常:", e)
+        log("claude CLI error:", e)
         return None
 
 
 def curate(cfg, candidates):
-    """智能精选+解读: 优先 Anthropic API(云端), 否则本机 claude CLI; 都不行返回 None"""
+    """AI curation: Anthropic API first (if ANTHROPIC_API_KEY is set), then the local CLI."""
     if os.environ.get("ANTHROPIC_API_KEY", "").strip():
         result = curate_via_api(cfg, candidates)
         if result:
             return result
-        log("API 方式失败, 尝试本机 claude CLI...")
+        log("API curation failed, trying local claude CLI...")
     return curate_via_cli(cfg, candidates)
 
 
 KEYWORD_TAGS = [
     ("vision-language-action", "VLA"), ("vla", "VLA"),
-    ("manipulat", "机器人操作"), ("grasp", "抓取"),
-    ("navigat", "导航"), ("humanoid", "人形机器人"),
-    ("dexterous", "灵巧手"), ("sim-to-real", "Sim2Real"),
-    ("world model", "世界模型"), ("locomot", "运动控制"),
-    ("reinforcement", "强化学习"), ("embodied", "具身智能"),
+    ("manipulat", "Manipulation"), ("grasp", "Grasping"),
+    ("navigat", "Navigation"), ("humanoid", "Humanoids"),
+    ("dexterous", "Dexterous Hands"), ("sim-to-real", "Sim2Real"),
+    ("world model", "World Models"), ("locomot", "Locomotion"),
+    ("reinforcement", "Reinforcement Learning"), ("embodied", DEFAULT_TAG),
 ]
 
 
@@ -419,7 +434,12 @@ def keyword_tag(text):
     for kw, tag in KEYWORD_TAGS:
         if kw in low:
             return tag
-    return "具身智能"
+    return DEFAULT_TAG
+
+
+def item_digest(it):
+    """Digest text of an item (accepts the legacy 'zh_summary' key from old latest.json files)."""
+    return it.get("digest") or it.get("zh_summary") or ""
 
 
 def build_items(cfg, candidates):
@@ -427,83 +447,65 @@ def build_items(cfg, candidates):
     items = []
     if curated:
         for c in curated:
-            p = candidates[c["idx"]]
             items.append({
-                "paper": p,
+                "paper": candidates[c["idx"]],
                 "tag": c["tag"],
                 "tldr": c.get("tldr", ""),
                 "position": c.get("position", ""),
-                "zh_summary": c["zh_summary"],
+                "digest": c["digest"],
                 "highlights": c.get("highlights", []),
             })
     else:
-        log("使用关键词兜底模式 (英文摘要)")
+        log("WARNING: AI curation unavailable (no ANTHROPIC_API_KEY and no working claude CLI); "
+            "falling back to keyword tags + raw abstracts")
         for p in candidates[: cfg["top_n"]]:
             items.append({
                 "paper": p,
                 "tag": keyword_tag(p["title"] + " " + p["summary"]),
                 "tldr": "",
                 "position": "",
-                "zh_summary": "(未启用智能摘要) " + p["summary"][:400],
+                "digest": "(AI digest unavailable) " + p["summary"][:400],
                 "highlights": [],
             })
-    # 补全代码链接
     for it in items:
         p = it["paper"]
-        code = p.get("github") or pwc_code(p["id"]) or "暂无"
-        it["code"] = code
+        it["code"] = p.get("github") or pwc_code(p["id"]) or NO_CODE
     return items
 
 
-# ---------------- 输出: Markdown / Bark / macOS ----------------
+# ---------------- Output: Markdown / Bark / macOS ----------------
 
 def render_markdown(items, date_str):
-    lines = ["# 今日具身智能 Top%d · %s\n" % (len(items), date_str),
-             "> 每日自动抓取 arXiv 具身智能(Embodied AI)最新论文, AI 精选解读(PaperLocus 风格)。\n"]
+    lines = ["# Embodied AI Daily Top %d · %s\n" % (len(items), date_str),
+             "> New Embodied AI papers from arXiv, selected and explained by AI.\n"]
     for i, it in enumerate(items, 1):
         p = it["paper"]
-        lines.append("## %d. 【%s】%s" % (i, it["tag"], p["title"]))
+        lines.append("## %d. [%s] %s" % (i, it["tag"], p["title"]))
         if it.get("tldr"):
             lines.append("\n> 💡 %s\n" % it["tldr"])
         if p.get("authors"):
-            lines.append("**作者**: " + ", ".join(p["authors"][:6]) +
-                         (" 等" if len(p["authors"]) > 6 else ""))
+            lines.append("**Authors**: " + ", ".join(p["authors"][:6]) +
+                         (" et al." if len(p["authors"]) > 6 else ""))
         if it.get("position"):
-            lines.append("\n**🧭 文献定位**: " + it["position"])
-        lines.append("\n" + it["zh_summary"] + "\n")
+            lines.append("\n**🧭 Position**: " + it["position"])
+        lines.append("\n" + item_digest(it) + "\n")
         if it.get("highlights"):
-            lines.append("**亮点**:")
+            lines.append("**Highlights**:")
             for h in it["highlights"]:
                 lines.append("- " + h)
             lines.append("")
-        lines.append("**链接**:")
+        lines.append("**Links**:")
         lines.append("- 📄 arXiv: %s" % p["abs_url"])
         lines.append("- 📕 PDF: %s" % (p.get("pdf_url") or "—"))
-        lines.append("- 💻 代码: %s" % it["code"])
+        lines.append("- 💻 Code: %s" % it.get("code", NO_CODE))
         lines.append("")
     return "\n".join(lines)
 
 
-def render_push_body(items):
-    # 单条推送: 每篇含标签+标题+一句话亮点+关键要点+链接; 完整长篇解读见 Markdown 存档
-    parts = []
-    for i, it in enumerate(items, 1):
-        p = it["paper"]
-        seg = ["%d.【%s】%s" % (i, it["tag"], p["title"])]
-        if it.get("tldr"):
-            seg.append("💡 " + it["tldr"])
-        hl = it.get("highlights") or []
-        if hl:
-            seg.append("· " + " · ".join(hl[:2]))
-        seg.append("📄 " + p["abs_url"])
-        parts.append("\n".join(seg))
-    return "\n\n".join(parts)
-
-
 def _truncate(s, limit=3200):
+    """Truncate to `limit` UTF-8 bytes (Bark payload limit)."""
     if len(s.encode("utf-8")) <= limit:
         return s
-    # 按字节安全截断
     out = s
     while len(out.encode("utf-8")) > limit - 3:
         out = out[:-1]
@@ -513,13 +515,13 @@ def _truncate(s, limit=3200):
 def push_bark(cfg, title, body):
     key = cfg.get("bark_key", "").strip()
     if not key:
-        log("未配置 bark_key, 跳过 iPhone 推送 (请在 config.json 填入)")
+        log("bark_key not set, skipping iPhone push")
         return
     url = cfg["bark_server"].rstrip("/") + "/" + key
     payload = json.dumps({
-        "title": title, "body": _truncate(body), "group": "具身日报", "sound": "birdsong"
+        "title": title, "body": _truncate(body), "group": "Embodied Daily", "sound": "birdsong"
     }, ensure_ascii=False)
-    # 用系统 curl 推送 (比 urllib 对 Bark 的 TLS 更稳定)
+    # System curl is more reliable than urllib against Bark's TLS setup.
     try:
         proc = subprocess.run(
             ["curl", "-s", "--max-time", "25", "-X", "POST", url,
@@ -527,71 +529,30 @@ def push_bark(cfg, title, body):
              "-d", payload],
             capture_output=True, text=True, timeout=30,
         )
-        msg = proc.stdout.strip() or proc.stderr.strip()
-        log("Bark 推送:", msg[:200])
+        log("Bark push:", (proc.stdout.strip() or proc.stderr.strip())[:200])
     except Exception as e:
-        log("Bark 推送失败:", e)
+        log("Bark push failed:", e)
 
 
-def _as_str(s):
-    # AppleScript 字符串: 保留中文(不能用 \uXXXX), 转义反斜杠和双引号, 去掉换行
+def _as_applescript_str(s):
+    # AppleScript string literal: escape backslashes and double quotes, drop newlines.
     s = str(s).replace("\\", "\\\\").replace('"', '\\"')
     s = s.replace("\r", " ").replace("\n", " ")
     return '"' + s + '"'
 
 
 def notify_macos(title, subtitle, msg):
+    if not IS_MACOS:
+        return
     try:
         script = "display notification %s with title %s subtitle %s" % (
-            _as_str(msg), _as_str(title), _as_str(subtitle))
+            _as_applescript_str(msg), _as_applescript_str(title), _as_applescript_str(subtitle))
         subprocess.run(["osascript", "-e", script], timeout=15)
     except Exception as e:
-        log("macOS 通知失败:", e)
+        log("macOS notification failed:", e)
 
 
-# ---------------- PDF 生成 + 邮件发送 ----------------
-
-def _md_to_pdf(md_path, pdf_path):
-    """Markdown → HTML 附件"""
-    html_path = pdf_path.replace(".pdf", ".html")
-    try:
-        with open(md_path, "r", encoding="utf-8") as f:
-            md_content = f.read()
-        html_content = _simple_md_to_html(md_content)
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        return html_path
-    except Exception as e:
-        log("HTML 生成失败:", e)
-    return False
-
-
-def _simple_md_to_html(md_text):
-    """极简 Markdown → HTML (标题/加粗/链接/列表), 不依赖第三方库"""
-    lines = md_text.split("\n")
-    html_lines = ['<html><head><meta charset="utf-8"><style>',
-                  'body{font-family:"PingFang SC",sans-serif;margin:2em;line-height:1.6}',
-                  'h1{color:#333;border-bottom:2px solid #ddd;padding-bottom:0.3em}',
-                  'h2{color:#555;margin-top:1.5em}',
-                  'a{color:#0066cc}',
-                  'blockquote{border-left:3px solid #ccc;padding-left:1em;color:#666}',
-                  '</style></head><body>']
-    for line in lines:
-        if line.startswith("# "):
-            html_lines.append("<h1>%s</h1>" % _esc(line[2:]))
-        elif line.startswith("## "):
-            html_lines.append("<h2>%s</h2>" % _esc(line[3:]))
-        elif line.startswith("> "):
-            html_lines.append("<blockquote>%s</blockquote>" % _inline(line[2:]))
-        elif line.startswith("- "):
-            html_lines.append("<li>%s</li>" % _inline(line[2:]))
-        elif line.strip() == "":
-            html_lines.append("<br>")
-        else:
-            html_lines.append("<p>%s</p>" % _inline(line))
-    html_lines.append("</body></html>")
-    return "\n".join(html_lines)
-
+# ---------------- Email (HTML attachment) ----------------
 
 def _esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -604,8 +565,34 @@ def _inline(s):
     return s
 
 
-def send_email_with_pdf(cfg, md_path, date_str, subject_prefix="📚 今日具身智能"):
-    """生成 PDF 并通过 SMTP 发送到配置的邮箱"""
+def simple_md_to_html(md_text):
+    """Minimal Markdown -> HTML (headings, bold, links, lists, quotes); no third-party deps."""
+    html = ['<html><head><meta charset="utf-8"><style>',
+            'body{font-family:-apple-system,"Segoe UI",sans-serif;margin:2em;line-height:1.6}',
+            'h1{color:#333;border-bottom:2px solid #ddd;padding-bottom:0.3em}',
+            'h2{color:#555;margin-top:1.5em}',
+            'a{color:#0066cc}',
+            'blockquote{border-left:3px solid #ccc;padding-left:1em;color:#666}',
+            '</style></head><body>']
+    for line in md_text.split("\n"):
+        if line.startswith("# "):
+            html.append("<h1>%s</h1>" % _esc(line[2:]))
+        elif line.startswith("## "):
+            html.append("<h2>%s</h2>" % _esc(line[3:]))
+        elif line.startswith("> "):
+            html.append("<blockquote>%s</blockquote>" % _inline(line[2:]))
+        elif line.startswith("- "):
+            html.append("<li>%s</li>" % _inline(line[2:]))
+        elif line.strip() == "":
+            html.append("<br>")
+        else:
+            html.append("<p>%s</p>" % _inline(line))
+    html.append("</body></html>")
+    return "\n".join(html)
+
+
+def send_email(cfg, md_path, date_str, subject_prefix="📚 Embodied AI Daily"):
+    """Send the digest as an HTML attachment over SMTP (no-op unless email_to is set)."""
     email_to = cfg.get("email_to", "").strip()
     if not email_to:
         return
@@ -613,343 +600,284 @@ def send_email_with_pdf(cfg, md_path, date_str, subject_prefix="📚 今日具�
     smtp_host = cfg.get("smtp_host", "").strip()
     smtp_password = cfg.get("smtp_password", "").strip()
     if not all([email_from, smtp_host, smtp_password]):
-        log("邮件配置不完整 (需要 email_from, smtp_host, smtp_password), 跳过邮件发送")
+        log("Incomplete email config (need email_from, smtp_host, smtp_password), skipping email")
         return
 
-    # 生成 PDF
-    pdf_path = md_path.replace(".md", ".pdf")
-    result = _md_to_pdf(md_path, pdf_path)
-    if result is True:
-        att_path = pdf_path
-    elif isinstance(result, str):
-        # 返回了 HTML 路径
-        att_path = result
-        log("PDF 生成失败, 改为附件发送 HTML")
-    else:
-        att_path = md_path
-        log("PDF/HTML 生成均失败, 附件发送 Markdown 原文")
+    att_path = md_path
+    try:
+        with open(md_path, "r", encoding="utf-8") as f:
+            html = simple_md_to_html(f.read())
+        att_path = os.path.splitext(md_path)[0] + ".html"
+        with open(att_path, "w", encoding="utf-8") as f:
+            f.write(html)
+    except Exception as e:
+        log("HTML generation failed, attaching raw Markdown:", e)
 
-    # 构造邮件
     msg = email.mime.multipart.MIMEMultipart()
-    subject = "%s · %s" % (subject_prefix, date_str)
-    msg["Subject"] = subject
+    msg["Subject"] = "%s · %s" % (subject_prefix, date_str)
     msg["From"] = email_from
     recipients = [e.strip() for e in email_to.split(",") if e.strip()]
     msg["To"] = ", ".join(recipients)
-
-    # 正文: 简短提示
-    body_text = "具身智能论文日报已生成，详见附件。\n\n日期: %s" % date_str
-    msg.attach(email.mime.text.MIMEText(body_text, "plain", "utf-8"))
-
-    # 附件
+    msg.attach(email.mime.text.MIMEText(
+        "Your Embodied AI paper digest is attached.\n\nDate: %s" % date_str, "plain", "utf-8"))
     att_name = os.path.basename(att_path)
     with open(att_path, "rb") as f:
         att = email.mime.application.MIMEApplication(f.read(), Name=att_name)
     att["Content-Disposition"] = 'attachment; filename="%s"' % att_name
     msg.attach(att)
 
-    # 发送
     smtp_port = int(cfg.get("smtp_port", 465))
-    use_ssl = cfg.get("smtp_use_ssl", True)
     try:
-        if use_ssl:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=30) as server:
-                server.login(email_from, smtp_password)
-                server.sendmail(email_from, recipients, msg.as_string())
+        ctx = ssl.create_default_context()
+        if cfg.get("smtp_use_ssl", True):
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=30)
         else:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-                server.starttls(context=ssl.create_default_context())
-                server.login(email_from, smtp_password)
-                server.sendmail(email_from, recipients, msg.as_string())
-        log("邮件发送成功: %s → %s" % (att_name, email_to))
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+            server.starttls(context=ctx)
+        with server:
+            server.login(email_from, smtp_password)
+            server.sendmail(email_from, recipients, msg.as_string())
+        log("Email sent: %s -> %d recipient(s)" % (att_name, len(recipients)))
     except Exception as e:
-        log("邮件发送失败:", e)
+        log("Email failed:", e)
 
 
 def push_digest(cfg, items, date_str):
-    """每篇论文单独推一条完整详细解读 (共 N 条, 每条都在 Bark 上限内)"""
+    """Push one Bark notification per paper, each with its full digest."""
     if not cfg.get("bark_key", "").strip():
-        log("未配置 bark_key, 跳过 iPhone 推送 (请在 config.json 填入)")
+        log("bark_key not set, skipping iPhone push")
         return
     n = len(items)
     for i, it in enumerate(items, 1):
         p = it["paper"]
-        title = "📚 %d/%d 今日具身 · %s" % (i, n, date_str)
-        lines = ["【%s】%s" % (it["tag"], p["title"])]
+        lines = ["[%s] %s" % (it["tag"], p["title"])]
         if it.get("tldr"):
             lines.append("💡 " + it["tldr"])
-        lines.append("")
-        lines.append(it["zh_summary"])
+        lines += ["", item_digest(it)]
         if it.get("highlights"):
-            lines.append("")
-            lines.append("✨ 亮点:")
-            for h in it["highlights"]:
-                lines.append("· " + h)
-        lines.append("")
-        lines.append("📄 arXiv: " + p["abs_url"])
-        lines.append("💻 代码: " + it["code"])
-        push_bark(cfg, title, "\n".join(lines))
+            lines += ["", "✨ Highlights:"] + ["· " + h for h in it["highlights"]]
+        lines += ["", "📄 arXiv: " + p["abs_url"], "💻 Code: " + it.get("code", NO_CODE)]
+        push_bark(cfg, "📚 %d/%d Embodied AI Daily · %s" % (i, n, date_str), "\n".join(lines))
 
 
-def _weekday_pushed_ids(archive_dir, here, week_dates, push_n):
-    """收集本周工作日已推送到手机的论文 id (每天前 push_n 篇)"""
-    ids = set()
-    for d in week_dates:
-        date_s = d.strftime("%Y-%m-%d")
-        json_path = os.path.join(archive_dir, date_s + ".json")
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                items = data.get("items", [])
-                for it in items[:push_n]:
-                    pid = it.get("paper", {}).get("id", "")
-                    if pid:
-                        ids.add(pid)
-                continue
-            except Exception:
-                pass
-        # json 不存在, 从 md 中取前 push_n 个 arXiv id 作为已推送
-        md_path = os.path.join(archive_dir, date_s + ".md")
-        if os.path.exists(md_path):
-            try:
-                with open(md_path, "r", encoding="utf-8") as f:
-                    text = f.read()
-                found = re.findall(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", text)
-                for mid in found[:push_n]:
-                    ids.add(mid)
-            except Exception:
-                pass
-    return ids
+def prioritize(items, prio):
+    """Stable-move items whose tag contains `prio` to the front."""
+    if not prio:
+        return list(items)
+    return ([it for it in items if prio in it.get("tag", "")] +
+            [it for it in items if prio not in it.get("tag", "")])
 
 
-def _weekday_all_items(archive_dir, here, week_dates):
-    """从本周工作日的存档 json 中加载所有论文条目; json 不存在则从 md 中提取基本信息兜底"""
-    all_items = []
-    seen_ids = set()
-    for d in week_dates:
-        date_s = d.strftime("%Y-%m-%d")
-        json_path = os.path.join(archive_dir, date_s + ".json")
-        md_path = os.path.join(archive_dir, date_s + ".md")
-        # 优先读 json
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for it in data.get("items", []):
-                    pid = it.get("paper", {}).get("id", "")
-                    if pid and pid not in seen_ids:
-                        seen_ids.add(pid)
-                        all_items.append(it)
-                continue
-            except Exception:
-                pass
-        # json 不存在, 从 md 里提取基本信息兜底
-        if os.path.exists(md_path):
-            try:
-                with open(md_path, "r", encoding="utf-8") as f:
-                    text = f.read()
-                # 提取每篇论文的标题、标签、arXiv链接、摘要段落
-                blocks = re.split(r"^## \d+\.", text, flags=re.MULTILINE)[1:]
-                for block in blocks:
-                    tag_m = re.search(r"【(.+?)】(.+?)$", block.strip().split("\n")[0])
-                    tag = tag_m.group(1) if tag_m else "具身智能"
-                    title = tag_m.group(2).strip() if tag_m else ""
-                    aid_m = re.search(r"arxiv\.org/abs/([0-9]+\.[0-9]+)", block)
-                    aid = aid_m.group(1) if aid_m else ""
-                    if not aid or aid in seen_ids:
-                        continue
-                    seen_ids.add(aid)
-                    tldr_m = re.search(r"💡\s*(.+)", block)
-                    tldr = tldr_m.group(1).strip() if tldr_m else ""
-                    # 提取摘要内容 (zh_summary): 文献定位之后、亮点之前的段落
-                    summary_m = re.search(r"\n\n(.+?)\n\n\*\*亮点", block, re.S)
-                    zh_summary = summary_m.group(1).strip() if summary_m else ""
-                    all_items.append({
-                        "paper": {
-                            "id": aid,
-                            "title": title,
-                            "abs_url": "https://arxiv.org/abs/" + aid,
-                            "pdf_url": "https://arxiv.org/pdf/" + aid,
-                            "authors": [],
-                            "summary": "",
-                            "published": "",
-                            "github": "",
-                        },
-                        "tag": tag,
-                        "tldr": tldr,
-                        "position": "",
-                        "zh_summary": zh_summary or "(从存档 md 恢复, 详细摘要请查看原文)",
-                        "highlights": [],
-                        "code": "暂无",
-                    })
-            except Exception:
-                pass
-    return all_items
+# ---------------- Weekend recap ----------------
+
+# Archive headings: new format "## 1. [Tag] Title", legacy format "## 1. 【Tag】Title".
+_HEADING_RE = re.compile(r"(?:\[(.+?)\]|【(.+?)】)\s*(.+?)$")
+# Digest paragraph: the single line right before the highlights / links section.
+_DIGEST_RE = re.compile(r"\n\n([^\n]+)\n\n\*\*(?:Highlights|亮点|Links|链接)")
 
 
-def weekend_digest(cfg):
-    """周末模式: 从本周一~周五的存档中选出未推送过的论文推送"""
+def parse_archive_md(text):
+    """Recover items (id, title, tag, tldr, digest) from an archived Markdown digest."""
+    items = []
+    for block in re.split(r"^## \d+\.", text, flags=re.MULTILINE)[1:]:
+        first = block.strip().split("\n")[0]
+        hm = _HEADING_RE.search(first)
+        tag = (hm.group(1) or hm.group(2)) if hm else DEFAULT_TAG
+        title = hm.group(3).strip() if hm else first.strip()
+        aid_m = re.search(ARXIV_ID_RE, block)
+        if not aid_m:
+            continue
+        aid = aid_m.group(1)
+        tldr_m = re.search(r"💡\s*(.+)", block)
+        digest_m = _DIGEST_RE.search(block)
+        items.append({
+            "paper": {
+                "id": aid, "title": title,
+                "abs_url": "https://arxiv.org/abs/" + aid,
+                "pdf_url": "https://arxiv.org/pdf/" + aid,
+                "authors": [], "summary": "", "published": "", "github": "",
+            },
+            "tag": tag,
+            "tldr": tldr_m.group(1).strip() if tldr_m else "",
+            "position": "",
+            "digest": (digest_m.group(1).strip() if digest_m else "")
+            or "(Recovered from archive; see the paper for details.)",
+            "highlights": [],
+            "code": NO_CODE,
+        })
+    return items
+
+
+def _load_archive_items(date_s):
+    """Items for one archived day: prefer the structured .json, fall back to the .md."""
+    json_path = os.path.join(ARCHIVE_DIR, date_s + ".json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f).get("items", [])
+        except Exception:
+            pass
+    md_path = os.path.join(ARCHIVE_DIR, date_s + ".md")
+    if os.path.exists(md_path):
+        try:
+            with open(md_path, "r", encoding="utf-8") as f:
+                return parse_archive_md(f.read())
+        except Exception:
+            pass
+    return []
+
+
+def weekend_digest(cfg, deliver_outputs=True):
+    """Weekend mode: arXiv does not announce on weekends, so push this week's unpushed papers."""
     today = datetime.now().date()
-    weekday = today.weekday()  # 5=Saturday, 6=Sunday
+    monday = today - timedelta(days=today.weekday())
+    week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
+    log("Weekend mode: recapping archives %s ~ %s" % (week_dates[0], week_dates[-1]))
 
-    # 计算本周一到周五的日期
-    monday = today - timedelta(days=weekday - 0) if weekday >= 5 else today - timedelta(days=weekday)
-    week_dates = [monday + timedelta(days=i) for i in range(5)]  # Mon-Fri
-    log("周末模式: 从本周 %s ~ %s 的存档中选论文" % (week_dates[0], week_dates[-1]))
-
-    # 收集工作日每天已推送到手机的论文 id (每天前 push_n 篇)
     push_n = int(cfg.get("push_n", 5))
-    pushed_ids = _weekday_pushed_ids(ARCHIVE_DIR, HERE, week_dates, push_n)
-    log("本周工作日已推送论文数:", len(pushed_ids))
-
-    # 加载本周所有存档论文
-    all_items = _weekday_all_items(ARCHIVE_DIR, HERE, week_dates)
-    log("本周存档总论文数:", len(all_items))
+    pushed_ids, all_items, seen = set(), [], set()
+    for d in week_dates:
+        day_items = _load_archive_items(d)
+        # The first push_n papers of each weekday were already pushed to the phone.
+        pushed_ids.update(it.get("paper", {}).get("id", "") for it in day_items[:push_n])
+        for it in day_items:
+            pid = it.get("paper", {}).get("id", "")
+            if pid and pid not in seen:
+                seen.add(pid)
+                all_items.append(it)
+    log("Already pushed this week:", len(pushed_ids), "| archived this week:", len(all_items))
 
     if not all_items:
-        push_bark(cfg, "📚 周末具身回顾", "本周无存档论文可回顾")
-        log("无存档, 退出")
+        if deliver_outputs:
+            push_bark(cfg, "📚 Weekend Embodied AI Recap", "No archived papers this week.")
+        log("Nothing archived, exiting")
         return
-
-    # 过滤掉已推送过的
-    remaining = [it for it in all_items
-                 if it.get("paper", {}).get("id", "") not in pushed_ids]
-    log("去除已推送后剩余:", len(remaining))
-
+    remaining = [it for it in all_items if it.get("paper", {}).get("id", "") not in pushed_ids]
     if not remaining:
-        push_bark(cfg, "📚 周末具身回顾", "本周论文已全部推送过, 无新内容~")
-        log("全部已推过, 退出")
+        if deliver_outputs:
+            push_bark(cfg, "📚 Weekend Embodied AI Recap",
+                      "Every paper from this week has already been pushed.")
+        log("Everything already pushed, exiting")
         return
 
-    # 取 push_n 篇推送
-    push_n = min(int(cfg.get("push_n", 5)), len(remaining))
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    remaining = prioritize(remaining, str(cfg.get("push_priority", "")).strip())
+    selected = remaining[: min(push_n, len(remaining))]
+    date_str = today.strftime("%Y-%m-%d")
+    label = date_str + " (weekend recap)"
+    log("Weekend recap: %d papers" % len(selected))
 
-    # 按兴趣优先级排序 (push_priority 字段优先)
-    prio = str(cfg.get("push_priority", "")).strip()
-    if prio:
-        head = [it for it in remaining if prio in it.get("tag", "")]
-        tail = [it for it in remaining if prio not in it.get("tag", "")]
-        remaining = head + tail
-
-    selected = remaining[:push_n]
-    log("周末推送 %d 篇" % len(selected))
-
-    # 推送到手机
-    push_digest(cfg, selected, date_str + " (周末回顾)")
-
-    # Mac 通知
-    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
-                       for i, it in enumerate(selected, 1))
-    notify_macos("📚 周末具身回顾 · %s (从本周未推送论文中选)" % date_str,
-                 " / ".join(dict.fromkeys(it["tag"] for it in selected)),
-                 titles)
-
-    # 存档周末回顾 (不覆盖工作日的, 用单独文件名)
-    md = render_markdown(selected, date_str + " (周末回顾)")
+    md = render_markdown(selected, label)
     md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
     with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
         f.write(md)
-    log("周末回顾已存档:", md_path)
-    # 生成 PDF 并发送邮件
-    send_email_with_pdf(cfg, md_path, date_str + " (周末回顾)", "📚 周末具身回顾")
+    log("Weekend recap archived:", md_path)
 
-
-def main():
-    cfg = load_config()
-    date_str = datetime.now().strftime("%Y-%m-%d")
-
-    # 周末检测: 周六(5)/周日(6) arXiv 不更新, 改为从本周存档中选未推送过的论文
-    if datetime.now().weekday() >= 5:
-        log("今天是周末, arXiv 不更新, 进入周末回顾模式")
-        weekend_digest(cfg)
+    if not deliver_outputs:
         return
+    push_digest(cfg, selected, label)
+    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24]) for i, it in enumerate(selected, 1))
+    notify_macos("📚 Weekend Embodied AI Recap · %s" % date_str,
+                 " / ".join(dict.fromkeys(it["tag"] for it in selected)), titles)
+    send_email(cfg, md_path, label, "📚 Weekend Embodied AI Recap")
 
-    log("开始抓取候选...")
-    candidates = gather_candidates(cfg)
-    log("候选数:", len(candidates))
-    if not candidates:
-        push_bark(cfg, "📚 今日具身智能", "今日未抓取到论文 (arXiv 可能无更新)")
-        log("无候选, 退出")
-        return
-    items = build_items(cfg, candidates)
-    log("最终篇数:", len(items))
 
-    md = render_markdown(items, date_str)
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write(md)
-    # 每天在 archive/ 也存一份 json, 供周末回顾结构化读取
-    json_archive_path = os.path.join(ARCHIVE_DIR, date_str + ".json")
-    with open(json_archive_path, "w", encoding="utf-8") as f:
-        json.dump({"date": date_str, "items": items}, f, ensure_ascii=False, indent=2)
-    # 同时维护 latest.md 与结构化的 latest.json (供 --push-only 复用)
-    with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
-        f.write(md)
-    with open(os.path.join(HERE, "latest.json"), "w", encoding="utf-8") as f:
-        json.dump({"date": date_str, "items": items}, f, ensure_ascii=False, indent=2)
-    log("已存档:", md_path)
-
-    deliver(cfg, items, date_str)
-    log("完成")
-
+# ---------------- Main ----------------
 
 def deliver(cfg, items, date_str):
-    """推送/通知/打开: iPhone 只推前 push_n 篇, Mac 通知+打开含全部 top_n 篇的日报"""
-    # iPhone: 只推前 push_n 篇 (默认5); Mac/存档: 全部 top_n 篇 (默认10)
+    """Phone gets the first push_n papers; Mac notification + digest show all top_n."""
     push_n = min(int(cfg.get("push_n", 5)), len(items))
-    # 手机端: 把指定方向(push_priority, 如"灵巧手")的论文排到最前
     prio = str(cfg.get("push_priority", "")).strip()
-    phone_items = items
+    phone_items = prioritize(items, prio)
     if prio:
-        head = [it for it in items if prio in it.get("tag", "")]
-        tail = [it for it in items if prio not in it.get("tag", "")]
-        phone_items = head + tail
-        log("手机端置顶'%s': 命中 %d 篇" % (prio, len(head)))
+        log("Phone priority '%s': %d match(es)"
+            % (prio, sum(prio in it.get("tag", "") for it in items)))
     push_digest(cfg, phone_items[:push_n], date_str)
-    # Mac 桌面通知一条汇总 (列出全部 top_n 篇标题)
-    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24])
-                       for i, it in enumerate(items, 1))
-    notify_macos("📚 今日具身智能 Top%d · %s (手机推前%d篇)" % (len(items), date_str, push_n),
-                 " / ".join(dict.fromkeys(it["tag"] for it in items)),
-                 titles)
-    # 自动用默认程序打开当天日报 (Mac 原生通知点击无动作, 用这个兜底)
-    if cfg.get("open_digest", True):
+    titles = "  ".join("%d.%s" % (i, it["paper"]["title"][:24]) for i, it in enumerate(items, 1))
+    notify_macos("📚 Embodied AI Daily Top %d · %s (top %d pushed to phone)"
+                 % (len(items), date_str, push_n),
+                 " / ".join(dict.fromkeys(it["tag"] for it in items)), titles)
+    # macOS notifications have no click action, so open the digest directly.
+    if cfg.get("open_digest", True) and IS_MACOS:
         try:
             subprocess.run(["open", os.path.join(HERE, "latest.md")], timeout=15)
         except Exception as e:
-            log("打开日报失败:", e)
-    # 生成 PDF 并发送邮件
-    send_email_with_pdf(cfg, os.path.join(HERE, "latest.md"), date_str)
+            log("Failed to open digest:", e)
+    send_email(cfg, os.path.join(HERE, "latest.md"), date_str)
 
 
-def push_only():
-    """读取上次生成的 latest.json 直接重推, 不重新抓取/调用 claude"""
-    cfg = load_config()
+def run(cfg, deliver_outputs=True):
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+
+    if datetime.now().weekday() >= 5:
+        log("Weekend: arXiv has no new announcements, switching to weekend recap")
+        weekend_digest(cfg, deliver_outputs)
+        return
+
+    log("Fetching candidates...")
+    candidates = gather_candidates(cfg)
+    log("Candidates:", len(candidates))
+    if not candidates:
+        if deliver_outputs:
+            push_bark(cfg, "📚 Embodied AI Daily", "No papers fetched today (arXiv may not have updated).")
+        log("No candidates, exiting")
+        return
+    items = build_items(cfg, candidates)
+    log("Selected:", len(items))
+
+    md = render_markdown(items, date_str)
+    md_path = os.path.join(ARCHIVE_DIR, date_str + ".md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(md)
+    data = {"date": date_str, "items": items}
+    # archive/<date>.json lets the weekend recap read structured data.
+    with open(os.path.join(ARCHIVE_DIR, date_str + ".json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    # latest.md / latest.json are reused by --push-only.
+    with open(os.path.join(HERE, "latest.md"), "w", encoding="utf-8") as f:
+        f.write(md)
+    with open(os.path.join(HERE, "latest.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    log("Archived:", md_path)
+
+    if deliver_outputs:
+        deliver(cfg, items, date_str)
+    log("Done")
+
+
+def push_only(cfg):
+    """Re-deliver the last run from latest.json without fetching or calling Claude."""
     path = os.path.join(HERE, "latest.json")
     if not os.path.exists(path):
-        log("没有 latest.json, 请先正常运行一次")
+        log("latest.json not found; run once normally first")
         return
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     items = data.get("items", [])
-    date_str = data.get("date", datetime.now().strftime("%Y-%m-%d"))
-    log("从 latest.json 重推, 篇数:", len(items))
-    deliver(cfg, items, date_str)
-    log("完成")
+    log("Re-pushing from latest.json, papers:", len(items))
+    deliver(cfg, items, data.get("date", datetime.now().strftime("%Y-%m-%d")))
+    log("Done")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Daily digest of new Embodied AI papers from arXiv.")
+    ap.add_argument("--push-only", action="store_true",
+                    help="re-deliver the last digest from latest.json without fetching")
+    ap.add_argument("--no-deliver", action="store_true",
+                    help="fetch, curate and archive only; no push, notification, email or open")
+    args = ap.parse_args(argv)
+    cfg = load_config()
+    if args.push_only:
+        push_only(cfg)
+    else:
+        run(cfg, deliver_outputs=not args.no_deliver)
 
 
 if __name__ == "__main__":
     try:
-        if "--push-only" in sys.argv:
-            push_only()
-        else:
-            main()
+        main()
     except Exception as e:
-        log("致命错误:", repr(e))
+        log("Fatal error:", repr(e))
         sys.exit(1)

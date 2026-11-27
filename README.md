@@ -1,139 +1,211 @@
-# 📚 embodied-daily · 每日具身智能论文日报
+<div align="center">
 
-> 每天早上 9:30 自动从 arXiv 抓取最新的**具身智能 (Embodied AI)** 论文，用 AI 精选 Top10，
-> 生成详细中文解读：**Mac 看全部 10 篇**（自动打开 Markdown 日报），**iPhone 推前 5 篇**（Bark 每篇一条），全文本地存档。
-> 全程无人值守，不需要打开任何程序。
+# 📚 embodied-daily
+
+### Your daily, AI-curated digest of new Embodied AI papers from arXiv
+
+[![CI](https://img.shields.io/github/actions/workflow/status/HaoyunT/embodied-daily/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/HaoyunT/embodied-daily/actions/workflows/ci.yml)
+[![Daily digest](https://img.shields.io/github/actions/workflow/status/HaoyunT/embodied-daily/daily.yml?branch=main&label=daily%20digest&style=flat-square)](https://github.com/HaoyunT/embodied-daily/actions/workflows/daily.yml)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Dependencies](https://img.shields.io/badge/dependencies-stdlib%20only-2ea44f?style=flat-square)](#-requirements)
+[![Claude](https://img.shields.io/badge/curated%20by-Claude-D97757?style=flat-square)](https://www.anthropic.com/claude)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/HaoyunT/embodied-daily?style=flat-square)](https://github.com/HaoyunT/embodied-daily/stargazers)
+
+**arXiv → Claude picks & explains the Top 10 → iPhone push · Mac digest · email · Markdown archive**
+
+[Example output](#-example-output) · [Quick start](#-quick-start) · [Run in the cloud](#%EF%B8%8F-run-in-the-cloud-github-actions) · [Configuration](#%EF%B8%8F-configuration) · [Archive](archive/)
+
+</div>
 
 ---
 
-## ✨ 特性
+Every morning at 09:30, embodied-daily pulls the newest **Embodied AI** papers from arXiv (VLA, robot manipulation, dexterous hands, humanoids, navigation, world models, sim-to-real, …). It asks Claude to pick the most important ones and writes a structured digest for each paper that places it in the context of prior work. The digest is delivered to your phone and desktop, and kept as a searchable Markdown archive. It runs unattended — on GitHub Actions (works even when your laptop is off) or locally via `launchd`.
 
-- 🔍 **自动抓取**：从 arXiv 多路检索（`cs.RO`、embodied、VLA、robot manipulation 等）合并去重
-- 🧠 **AI 精选解读**（PaperLocus 风格：文献定位 + 区分论文断言/推断）——云端用 **Anthropic API**，本机用 `claude` CLI（复用 Claude 订阅）：
-  - Top10 重要性排序
-  - 一句话亮点（TL;DR）+ 🧭 文献定位（built on A, changed B → C）
-  - 详细中文解读（问题 / 方法 / 创新点 / 实验结果 / 价值）
-  - 关键要点列表 + 方向标签
-- 💻 **代码链接**：自动从摘要 / Papers with Code 抽取 GitHub 仓库，没有则如实标「暂无」
-- 📲 **送达 iPhone + Mac**：精选 Top10 中**前 5 篇**每篇单独推送一条详细解读到 iPhone（Bark）；Mac 弹汇总通知并自动打开含**全部 10 篇**的日报 Markdown，全文同时本地存档
-- ⏰ **定时无人值守**：☁️ GitHub Actions（关机也能跑，推荐）或本机 `launchd`，每天 9:30 自动运行
-- 🛟 **优雅降级**：`claude` CLI 不可用时自动退化为英文摘要 + 关键词标签
+## ✨ Features
 
-## 🚀 安装
+| | |
+|---|---|
+| 🔍 **Multi-query fetching** | Merges and de-duplicates several arXiv queries (`cs.RO`, `embodied`, `vision-language-action`, `robot manipulation`, or your own). Only the newest announcement day is kept, and papers already covered in the last 7 days are skipped. |
+| 🧠 **AI curation** | Claude ranks the candidates by importance (biased towards your `interests`) and writes for each paper a **TL;DR**, a **🧭 literature position** ("builds on A, changes B → C"), a **detailed digest** (problem / method / novelty / results / limits), and **highlights**. Inferences are marked as such; nothing is invented beyond the abstract. |
+| 💻 **Code links** | Extracted from the abstract, with a Papers with Code fallback; shown as `N/A` when none exists. |
+| 📲 **Delivery** | One [Bark](https://github.com/Finb/Bark) push per paper (top 5) to iPhone; a macOS notification plus the full Top 10 digest opened on your Mac; optional email with an HTML attachment. |
+| 🗓️ **Weekend recap** | arXiv is quiet on weekends, so on Saturday and Sunday you get this week's papers that you haven't been sent yet. |
+| 🌐 **Any language** | Digests are written in English by default; set `language` to e.g. `Chinese` to get them in another language. |
+| 🛟 **Graceful fallback** | No API key and no `claude` CLI? You still get the Top N with raw abstracts and keyword tags. |
+| 🪶 **Zero dependencies** | A single Python file using only the standard library (+ system `curl`). |
+
+## 👀 Example output
+
+Each day produces [`archive/YYYY-MM-DD.md`](archive/). An entry looks like this:
+
+> ## 1. [VLA] Cairn: Object-Centric 3D Trajectory Priors for Steering Frozen VLAs
+>
+> > 💡 Steers a frozen VLA with object-centric 3D trajectory priors so it copes with moved objects and obstacles without layout-specific fine-tuning.
+>
+> **🧭 Position**: Builds on pretrained vision-language-action controllers whose object destinations are tied to training layouts, and replaces per-layout fine-tuning, which needs fresh robot data and erodes existing skills, with inference-time steering from object-centric 3D trajectory priors while the VLA stays frozen.
+>
+> The problem is that VLAs act as capable low-level controllers yet bind where objects go to the layouts seen in training, so when objects are moved or obstacles block the path they carry objects to the wrong place or into collisions. Fine-tuning on each new layout is costly because it requires robot data per layout and causes the model to lose skills it already had. Cairn keeps the VLA weights frozen and steers its behavior using object-centric 3D trajectory priors … The value lies in training-free adaptation to rearranged scenes and new obstacles while preserving pretrained skills. Limitations likely include dependence on the quality of the 3D trajectory priors and on 3D perception.
+>
+> **Highlights**:
+> - VLA weights stay frozen; no per-layout robot data or fine-tuning
+> - Object-centric 3D trajectory priors redirect destinations and avoid obstacles
+> - Addresses skill erosion caused by fine-tuning on new layouts
+>
+> **Links**: 📄 [arXiv](https://arxiv.org/abs/2611.34914) · 📕 [PDF](https://arxiv.org/pdf/2611.34914v1) · 💻 Code: N/A
+
+On your phone, each of the top 5 papers arrives as its own Bark notification with the same TL;DR, digest, highlights and links.
+
+Archives generated before this repository switched to English are in Chinese and are kept as-is.
+
+## 🔢 How papers are selected
+
+1. **Candidate pool (by date).** All queries are merged and de-duplicated. With `same_day_only` (default), only papers from the newest arXiv announcement day are kept; papers already archived in the last `dedup_days` days are dropped. The newest `max_candidates` (40) form the pool.
+2. **AI ranking (by importance + relevance).** Titles and abstracts are sent to Claude, which selects the `top_n` (10) most relevant and valuable papers, ranks them, and favours your `interests`.
+3. **Delivery.** The Mac digest and archive show all `top_n` papers; the phone receives the first `push_n` (5), with `push_priority` matches moved to the front.
+
+> [!NOTE]
+> Ranking is the model's judgement based on abstracts only, not on citations, authors or venues, so re-running the same day can change the order slightly. Steer it with `interests`, or edit the prompt in `build_curate_prompt()`.
+
+## 🚀 Quick start
 
 ```bash
-git clone <你的仓库地址> embodied-daily
+git clone https://github.com/HaoyunT/embodied-daily.git
 cd embodied-daily
-cp config.example.json config.json   # 然后填入你的 Bark key
-bash install.sh                        # 安装 skill + 注册 launchd 定时任务
+cp config.example.json config.json       # then fill in bark_key, interests, ...
+python3 embodied_daily.py --no-deliver   # fetch + curate + archive, no notifications
+cat latest.md
 ```
 
-### 配置 Bark（iPhone 推送）
+Curation uses `ANTHROPIC_API_KEY` if it is set, otherwise the local [`claude` CLI](https://claude.com/claude-code) (your Claude login, no API key needed).
 
-1. iPhone App Store 安装免费 App **Bark**
-2. 打开后复制你的推送 key（URL 中 `https://api.day.app/`**`XXXXXX`** 那段）
-3. 填入 `config.json` 的 `bark_key`
+| Command | What it does |
+|---|---|
+| `python3 embodied_daily.py` | Full run: fetch → curate → archive → push / notify / email |
+| `python3 embodied_daily.py --no-deliver` | Fetch → curate → archive only |
+| `python3 embodied_daily.py --push-only` | Re-deliver the last digest from `latest.json` without fetching |
 
-### 手动运行 / 测试
+### Scheduled run on macOS (`launchd`)
 
 ```bash
-python3 embodied_daily.py            # 立即抓取+解读+推送+存档
-cat archive/$(date +%F).md           # 查看今天的日报
+bash install.sh   # creates config.json if missing, installs the Claude Code skill, registers a 09:30 launchd job
 ```
 
-在 Claude Code 里也可以直接 `/embodied-daily` 手动触发或排查。
+The installer also installs a [Claude Code](https://claude.com/claude-code) skill, so you can type `/embodied-daily` in Claude Code to trigger or inspect a run. `launchd` only runs while the Mac is awake; a missed run executes after wake.
 
-## ☁️ 云端运行（GitHub Actions，推荐：不依赖本机、Mac 关机也能收到）
+### iPhone push with Bark
 
-本机 `launchd` 只在 Mac 开机且未睡眠时才会运行。要做到**每天 9:30 雷打不动、关机也照推**，用仓库内置的 GitHub Actions 工作流（`.github/workflows/daily.yml`，已配置北京时间 9:30）。
+1. Install the free **Bark** app from the App Store.
+2. Copy your device key — the `XXXXXX` part of `https://api.day.app/XXXXXX`.
+3. Put it in `config.json` as `bark_key` (or the `BARK_KEY` secret on GitHub Actions).
 
-云端没有本机的 `claude` 登录态，因此用 **Anthropic API** 生成中文摘要（按量付费，每天约几分钱）。
+## ☁️ Run in the cloud (GitHub Actions)
 
-**一次性配置（在你的 GitHub 仓库页面）：**
+The bundled workflow [`daily.yml`](.github/workflows/daily.yml) runs every day at 01:30 UTC (09:30 Beijing time), curates with the Anthropic API, pushes to your phone, and commits the day's archive back to the repo — no machine of yours needs to be on.
 
-1. **Settings → Secrets and variables → Actions → New repository secret**，添加两个 Secret：
-   - `ANTHROPIC_API_KEY`：Anthropic API key（官方 [console.anthropic.com](https://console.anthropic.com)，或第三方中转服务的 key——后者需在 Variables 里配 `ANTHROPIC_BASE_URL`）
-   - `BARK_KEY`：你的 Bark 推送 key
-2. （可选）在同页 **Variables** 标签添加：
-   - `ANTHROPIC_BASE_URL`：**若用第三方中转 API 必填**，填中转服务的地址（如 `https://xxx.example.com`，官方则无需设置）
-   - `EMBODIED_INTERESTS`：兴趣偏好，如 `VLA, 灵巧手`
-   - `ANTHROPIC_MODEL`：模型，默认 `claude-sonnet-4-6`
-3. **Actions** 页面找到「每日具身智能日报」工作流，点 **Run workflow** 手动跑一次验证。
+1. Fork this repository.
+2. **Settings → Secrets and variables → Actions → Secrets**, add:
 
-之后每天 9:30（UTC 1:30）自动运行：抓取 → API 精选解读 → 推送 iPhone → 把当天日报存档提交回仓库。
+   | Secret | Required | Description |
+   |---|---|---|
+   | `ANTHROPIC_API_KEY` | ✅ for AI digests | Key from [console.anthropic.com](https://console.anthropic.com) (or from an API-compatible proxy, see `ANTHROPIC_BASE_URL`) |
+   | `BARK_KEY` | for iPhone push | Your Bark device key |
+   | `SMTP_PASSWORD` | for email | SMTP password / app password |
 
-> ⚠️ GitHub Actions 的定时触发可能延迟几分钟到几十分钟（平台特性），属正常现象。
+3. Optionally add **Variables**:
 
-## ⚙️ 配置项（`config.json`）
+   | Variable | Description |
+   |---|---|
+   | `EMBODIED_INTERESTS` | e.g. `VLA, dexterous manipulation, world models` |
+   | `EMBODIED_PUSH_PRIORITY` | tag keyword to push first, e.g. `Dexterous` |
+   | `EMBODIED_LANGUAGE` | digest language, default `English` |
+   | `ANTHROPIC_MODEL` | default `claude-sonnet-4-6` |
+   | `ANTHROPIC_BASE_URL` | only for API-compatible proxies |
+   | `EMAIL_TO`, `EMAIL_FROM`, `SMTP_HOST` | email delivery |
 
-| 字段 | 说明 | 默认 |
-|---|---|---|
-| `bark_key` | Bark 推送 key（必填才会推 iPhone） | `""` |
-| `bark_server` | Bark 服务器（自建可改） | `https://api.day.app` |
-| `top_n` | 精选篇数：Mac 日报 / 存档展示全部 `top_n` 篇 | `10` |
-| `push_n` | iPhone 只推送前 `push_n` 篇（≤ `top_n`） | `5` |
-| `interests` | **个人兴趣偏好**：填你关注的方向，相关论文会被优先选入并排前面（留空则不偏向） | `""` |
-| `same_day_only` | **只推当日**：仅保留最新一个公布日的论文，不跨多天（即使不足 `top_n` 也不向前补） | `true` |
-| `lookback_days` | `same_day_only=false` 时生效：回看最近几天 | `3` |
-| `max_candidates` | 送 AI 精选的候选上限（即"分母"） | `40` |
-| `queries` | arXiv 检索式数组 | 见文件 |
-| `use_claude_cli` | 是否启用 AI 摘要（云端走 Anthropic API，本机走 `claude` CLI） | `true` |
-| `api_model` | 云端 Anthropic API 用的模型（环境变量 `ANTHROPIC_MODEL` 可覆盖） | `claude-sonnet-4-6` |
-| `api_base_url` | API 地址（第三方中转填其地址，环境变量 `ANTHROPIC_BASE_URL` 可覆盖） | `https://api.anthropic.com` |
-| `claude_bin` | claude 可执行文件路径（留空自动探测） | `""` |
-| `open_digest` | 跑完后是否自动用默认程序打开当天日报 `latest.md`（Mac） | `true` |
+4. Open **Actions → Embodied AI Daily → Run workflow** once to verify.
 
-> 💡 **个人化例子**：把 `interests` 设成 `"VLA, 灵巧手操作, 世界模型"`，每天的 Top10 就会更偏向这些方向。
+> [!TIP]
+> Without `ANTHROPIC_API_KEY` the workflow still succeeds but falls back to raw abstracts — look for `WARNING: AI curation unavailable` in the log. Scheduled GitHub Actions runs can be delayed by several minutes.
 
-## 🔢 Top10 是怎么选出来 & 排序的（iPhone 取前 5）
+## ⚙️ Configuration
 
-分两步：
+All options live in `config.json` (see [`config.example.json`](config.example.json)); environment variables override them.
 
-**第一步 · 圈定候选池（"分母"，纯按时间）**
-从多路 arXiv 检索（`cs.RO` / embodied / VLA / robot manipulation）抓取结果，合并去重。默认 `same_day_only=true`，**只保留最新一个公布日的论文**（不跨多天），按提交时间倒序，取前 `max_candidates`（默认 **40**）篇作为候选。
-→ 所以分母 = **当日那一批**具身论文（运行日志里 `当日批次: 日期 篇数: N` 就是它）。若关掉 `same_day_only`，则改为回看 `lookback_days` 天。
+| Key | Env override | Description | Default |
+|---|---|---|---|
+| `bark_key` | `BARK_KEY` | Bark device key; empty disables iPhone push | `""` |
+| `bark_server` | `BARK_SERVER` | Bark server (change if self-hosted) | `https://api.day.app` |
+| `top_n` | | Papers selected per day (all shown in the digest) | `10` |
+| `push_n` | | Papers pushed to the phone (≤ `top_n`) | `5` |
+| `push_priority` | `EMBODIED_PUSH_PRIORITY` | Phone push: papers whose tag contains this go first | `""` |
+| `interests` | `EMBODIED_INTERESTS` | Your research interests, highest priority first | `""` |
+| `language` | `EMBODIED_LANGUAGE` | Language of the generated digest | `English` |
+| `same_day_only` | | Only the newest arXiv announcement day | `true` |
+| `dedup_days` | | Skip papers archived in the last N days (0 = off) | `7` |
+| `lookback_days` | | Days to look back when `same_day_only` is `false` | `3` |
+| `max_candidates` | | Candidate pool size sent to the model | `40` |
+| `queries` | | arXiv `search_query` strings | see file |
+| `use_claude_cli` | | Enable AI curation (API first, then CLI) | `true` |
+| `api_model` | `ANTHROPIC_MODEL` | Anthropic model | `claude-sonnet-4-6` |
+| `api_base_url` | `ANTHROPIC_BASE_URL` | API base URL | `https://api.anthropic.com` |
+| `api_retries` | | Retries on API failure | `3` |
+| `claude_bin` | | Path to the `claude` CLI (empty = auto-detect) | `""` |
+| `open_digest` | | macOS: open `latest.md` after a run | `true` |
+| `email_to` | `EMAIL_TO` | Comma-separated recipients; empty disables email | `""` |
+| `email_from` | `EMAIL_FROM` | Sender / SMTP account | `""` |
+| `smtp_host` | `SMTP_HOST` | SMTP server | `""` |
+| `smtp_port` | | `465` (SSL) or `587` (STARTTLS) | `465` |
+| `smtp_password` | `SMTP_PASSWORD` | Prefer the env var over the file | `""` |
+| `smtp_use_ssl` | | `true` = SSL, `false` = STARTTLS | `true` |
 
-**第二步 · AI 精选 + 排序（按"重要性 + 相关性"）**
-把这批候选的**标题 + 摘要**整体发给 `claude`，让它：
-1. 挑出与具身智能最相关、最有价值的 `top_n`（默认 **10**）篇；
-2. **按重要性从高到低排序**；
-3. 若配置了 `interests`，则**与你兴趣相关的优先选入、排更靠前**。
+`config.json` is git-ignored — keep your keys there or in environment variables, never in tracked files.
 
-最终：**Mac 日报 / 存档展示全部 `top_n`（10）篇**，**iPhone 只推送排在最前的 `push_n`（5）篇**。
+## 🧱 How it works
 
-> ⚠️ **说明**：排序是 `claude` 基于摘要内容的**主观判断**，不依据引用量、作者或机构等硬指标，因此带有模型主观性，同一天重跑顺序可能略有变化。想要更可控，可在 `config.json` 里用 `interests` 引导，或自行修改脚本中 `claude_curate()` 的 prompt。
-
-## 🧱 工作原理
-
+```text
+arXiv API (several queries)
+        │  merge · de-dup · newest day · skip recently covered
+        ▼
+Claude (Anthropic API or local claude CLI)
+        │  rank Top N · TL;DR · literature position · digest · highlights
+        ▼
+Markdown digest ──┬──▶ archive/DATE.md          (committed back by GitHub Actions)
+                  ├──▶ latest.md / latest.json  (reused by --push-only)
+                  ├──▶ Bark → iPhone            (one push per paper, top push_n)
+                  ├──▶ macOS notification       (+ opens the full digest)
+                  └──▶ Email                    (HTML attachment, optional)
 ```
-arXiv API ──▶ 合并去重/按日期筛选 ──▶ claude CLI 精选Top10+中文解读
-                                            │
-              ┌─────────────────────────────┼──────────────────────┐
-              ▼                             ▼                       ▼
-   Bark → iPhone(每篇一条详细)        Mac 桌面汇总通知          Markdown 存档
-```
 
-## 📁 目录结构
+## 📁 Repository layout
 
-```
+```text
 embodied-daily/
-├── embodied_daily.py          # 主脚本（仅依赖 Python 标准库 + 系统 curl）
-├── config.example.json        # 配置模板
-├── config.json                # 你的配置（含 Bark key，已 gitignore）
-├── install.sh                 # 一键安装：装 skill + 注册 launchd
-├── skill/SKILL.md             # Claude Code skill 源文件
-├── launchd/                   # launchd 定时任务模板
-├── archive/                   # 每日日报存档（Markdown）
-└── logs/                      # 运行日志（已 gitignore）
+├── embodied_daily.py          # the whole tool (stdlib only)
+├── config.example.json        # configuration template → copy to config.json
+├── install.sh                 # macOS: install Claude Code skill + launchd job
+├── launchd/                   # launchd plist template
+├── skill/SKILL.md             # Claude Code skill (/embodied-daily)
+├── tests/                     # offline unit tests
+├── archive/                   # daily digests (Markdown)
+└── .github/workflows/         # daily.yml (digest) · ci.yml (tests)
 ```
 
-## 📋 依赖
+## 📋 Requirements
 
-- macOS（用到 `launchd` 定时与 `osascript` 桌面通知）
-- Python 3（系统自带 `/usr/bin/python3` 即可）
-- 系统 `curl`
-- 可选：[`claude` CLI](https://claude.com/claude-code)（用于高质量中文摘要）
+- Python 3.9+ (the macOS system `/usr/bin/python3` works), standard library only
+- `curl` (for Bark)
+- For AI digests: an `ANTHROPIC_API_KEY`, or the [`claude` CLI](https://claude.com/claude-code)
+- macOS only for `launchd`, desktop notifications and auto-open; everything else runs on any OS
+
+## 🤝 Contributing
+
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Run the tests with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## 📝 License
 
-MIT
+[MIT](LICENSE). Paper titles, abstracts and links belong to their authors and arXiv. Generated digests are AI-written summaries and may contain mistakes — always check the original paper.

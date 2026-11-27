@@ -1,11 +1,13 @@
 {
-  "bark_key": "在这里填入你的 Bark key（iPhone 安装 Bark App 后获取，URL 中 api.day.app/ 后面那段）",
+  "bark_key": "",
   "bark_server": "https://api.day.app",
   "top_n": 10,
   "push_n": 5,
   "push_priority": "",
-  "interests": "（可选）填你重点关注的方向，相关论文会被优先选入并排前面，例如：VLA, 灵巧手操作, 世界模型",
+  "interests": "",
+  "language": "English",
   "same_day_only": true,
+  "dedup_days": 7,
   "lookback_days": 3,
   "max_candidates": 40,
   "queries": [
@@ -17,6 +19,13 @@
   "use_claude_cli": true,
   "api_model": "claude-sonnet-4-6",
   "api_base_url": "https://api.anthropic.com",
+  "api_retries": 3,
   "claude_bin": "",
-  "open_digest": true
+  "open_digest": true,
+  "email_to": "",
+  "email_from": "",
+  "smtp_host": "",
+  "smtp_port": 465,
+  "smtp_password": "",
+  "smtp_use_ssl": true
 }

@@ -1,14 +1,18 @@
-# 个人配置与密钥（含 Bark key，切勿提交）
+# Personal config and secrets (contains your Bark key / SMTP password) — never commit
 config.json
+.env
 
-# 运行产物
+# Run outputs
 logs/
 latest.md
+latest.json
+archive/*.json
+archive/*.html
 
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # macOS
 .DS_Store
-latest.json

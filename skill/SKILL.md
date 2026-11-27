@@ -1,56 +1,57 @@
 ---
 name: embodied-daily
-description: 生成/查看今日具身智能(Embodied AI)论文日报 —— 从 arXiv 抓取最新具身相关论文, 给出中文摘要、arXiv链接、代码仓库、方向标签, Top5。可手动触发, 每篇单独推送一条详细解读到 iPhone(Bark), 并在 Mac 弹一条汇总通知。当用户说"具身日报""今天的具身论文""embodied daily"时使用。
+description: Generate or view today's Embodied AI paper digest — fetches the latest embodied-AI papers from arXiv and gives a ranked Top-N with digests, arXiv links, code links and topic tags; pushes to iPhone (Bark) and shows a macOS notification. Use when the user asks for "embodied daily", "today's embodied AI papers", or the embodied paper digest.
 ---
 
-# 具身智能日报 (embodied-daily)
+# Embodied AI Daily (embodied-daily)
 
-每天 9:30 由 launchd 自动运行 `~/embodied-daily/embodied_daily.py`，把 Top5 论文**每篇单独推送一条详细解读到 iPhone(Bark)**、在 **Mac 弹一条汇总通知**，并存档为 Markdown。本 skill 用于**手动触发**或**查看/调整**。
+A launchd job runs `__REPO__/embodied_daily.py` every day at 09:30. It pushes the top papers to iPhone (one Bark notification per paper), shows a macOS summary notification, and archives the digest as Markdown. Use this skill to **trigger a run manually** or to **inspect / adjust** the setup.
 
-## 用户意图与对应动作
+## User intents and actions
 
-### 1. 立即生成今天的日报（手动触发整条链路）
-运行脚本，它会抓取 arXiv → claude 中文摘要 → 每篇一条推送到 Bark + Mac 汇总通知 → 存档：
+### 1. Generate today's digest now (full pipeline)
 ```bash
-/usr/bin/python3 ~/embodied-daily/embodied_daily.py
+python3 __REPO__/embodied_daily.py              # fetch → curate → push → archive
+python3 __REPO__/embodied_daily.py --no-deliver # fetch → curate → archive only (no push)
 ```
-跑完后读取 `~/embodied-daily/latest.md` 并在会话里把内容也展示给用户。
+Afterwards, read `__REPO__/latest.md` and show its content to the user.
 
-### 2. 查看最近一次/某天的日报（不重新抓取）
+### 2. View a past digest (no new fetch)
 ```bash
-cat ~/embodied-daily/latest.md            # 最近一次
-ls ~/embodied-daily/archive/              # 所有存档
-cat ~/embodied-daily/archive/2026-06-10.md
+cat __REPO__/latest.md          # most recent run
+ls __REPO__/archive/            # all archived days
+cat __REPO__/archive/YYYY-MM-DD.md
 ```
-读取后把内容整理展示给用户。
 
-### 3. 只在会话里看、不想推送
-直接用脚本里的抓取逻辑做一次性调研：用 WebFetch 拉
+### 3. One-off look in the conversation, without pushing
+Fetch
 `https://export.arxiv.org/api/query?search_query=cat:cs.RO+OR+all:embodied&sortBy=submittedDate&sortOrder=descending&max_results=30`
-然后挑 Top5 具身相关论文，给中文摘要 + arXiv 链接 + 代码链接（在摘要里找 github，没有就标"暂无"）+ 方向标签。
+with WebFetch, then pick the top embodied-AI papers and give a digest, arXiv link, code link (a GitHub URL from the abstract, otherwise "N/A") and topic tag for each.
 
-### 4. 调整配置
-编辑 `~/embodied-daily/config.json`：
-- `bark_key`: iPhone Bark 推送 key（**首次使用必须填**）
-- `interests`: 个人兴趣偏好（如 "VLA, 灵巧手"），相关论文会被优先选入并排前面
-- `top_n`: 每天篇数（默认 5）
-- `lookback_days`: 抓取最近几天（默认 3）
-- `queries`: arXiv 检索式数组
-- `use_claude_cli`: 是否用本机 claude CLI 生成中文摘要（默认 true）
+### 4. Change configuration
+Edit `__REPO__/config.json`:
+- `bark_key`: Bark device key for iPhone push (**required for push**)
+- `interests`: research interests, highest priority first (e.g. "VLA, dexterous hands")
+- `language`: digest language (default "English")
+- `top_n` / `push_n`: papers in the digest / pushed to the phone (default 10 / 5)
+- `queries`: arXiv search queries
+- `use_claude_cli`: enable AI curation (default true)
 
-### 5. 排查定时任务
+See the repo README for the full list.
+
+### 5. Troubleshoot the scheduled job
 ```bash
 launchctl print gui/$(id -u)/com.embodied.daily | grep -E "state|last exit"
-cat ~/embodied-daily/logs/stdout.log
-cat ~/embodied-daily/logs/stderr.log
+cat __REPO__/logs/stdout.log
+cat __REPO__/logs/stderr.log
 ```
-重新加载：
+Reload:
 ```bash
 launchctl bootout gui/$(id -u)/com.embodied.daily
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.embodied.daily.plist
 ```
 
-## 注意
-- 中文摘要复用本机 `claude` CLI（你的 Claude 订阅），无需单独 API key；若 CLI 不可用会退化为英文摘要 + 关键词标签。
-- arXiv 周末/节假日可能不更新，`lookback_days` 默认回看 3 天兜底。
-- launchd 任务只在 Mac 开机时生效；合盖睡眠时会在唤醒后补跑当天遗漏的任务。
+## Notes
+- Locally, curation uses the `claude` CLI (your Claude login), so no API key is needed. If neither `ANTHROPIC_API_KEY` nor the CLI is available, it falls back to raw abstracts + keyword tags.
+- arXiv does not announce on weekends; on Saturday/Sunday the script sends a recap of this week's papers that were not pushed yet.
+- launchd only runs while the Mac is awake; a missed run is executed after wake.
