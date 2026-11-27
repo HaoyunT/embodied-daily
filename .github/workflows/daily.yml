@@ -1,13 +1,13 @@
-name: Daily Embodied AI Digest
+name: Embodied AI Daily
 
 on:
   schedule:
-    # UTC 01:30 = 09:30 Beijing time (GitHub Actions schedules may be delayed by a few minutes)
+    # 01:30 UTC = 09:30 Beijing time (scheduled runs may be delayed by GitHub)
     - cron: '30 1 * * *'
-  workflow_dispatch: {}   # Allow manual triggering from the Actions page
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 permissions:
-  contents: write          # allow committing the daily digest archive back to the repo
+  contents: write          # commit the day's archive back to the repo
 
 concurrency:
   group: embodied-daily
@@ -15,34 +15,42 @@ concurrency:
 
 jobs:
   digest:
+    # Scheduled runs are opt-in: set the repository variable ENABLE_DAILY_DIGEST=true in your fork.
+    # Manual runs (Run workflow) always work.
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_DAILY_DIGEST == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: generate and push the daily digest
+      - name: Generate and deliver digest
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
-          BARK_KEY: ${{ secrets.BARK_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO: ${{ vars.EMAIL_TO }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
           EMBODIED_INTERESTS: ${{ vars.EMBODIED_INTERESTS }}
           EMBODIED_PUSH_PRIORITY: ${{ vars.EMBODIED_PUSH_PRIORITY }}
+          EMBODIED_LANGUAGE: ${{ vars.EMBODIED_LANGUAGE }}
         run: python3 embodied_daily.py
 
-      - name: archive and commit back
+      - name: Commit archive
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add archive/*.md 2>/dev/null || true
+          git add -f archive/*.md 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No new archive, skipping commit"
           else
-            git commit -m "chore: daily embodied digest archive $(date -u +%F)"
+            git commit -m "chore: archive embodied daily digest $(date -u +%F)"
             git push
           fi

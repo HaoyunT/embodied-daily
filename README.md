@@ -1,139 +1,212 @@
-# 📚 embodied-daily - Daily Embodied AI Paper Digest
+<div align="center">
 
-> Every morning at 9:30, automatically pull the latest **Embodied AI** papers from arXiv, pick the Top 10 with AI,
-> and write detailed Chinese reviews: **Mac shows all 10** (opens the Markdown digest automatically), **iPhone gets the top 5** (one Bark push each), everything archived locally.
-> Fully unattended, no need to open any app.
+# 📚 embodied-daily
+
+### Your daily, AI-curated digest of new Embodied AI papers from arXiv
+
+[![CI](https://img.shields.io/github/actions/workflow/status/HaoyunT/embodied-daily/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/HaoyunT/embodied-daily/actions/workflows/ci.yml)
+[![Daily digest](https://img.shields.io/github/actions/workflow/status/HaoyunT/embodied-daily/daily.yml?branch=main&label=daily%20digest&style=flat-square)](https://github.com/HaoyunT/embodied-daily/actions/workflows/daily.yml)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Dependencies](https://img.shields.io/badge/dependencies-stdlib%20only-2ea44f?style=flat-square)](#-requirements)
+[![Claude](https://img.shields.io/badge/curated%20by-Claude-D97757?style=flat-square)](https://www.anthropic.com/claude)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/HaoyunT/embodied-daily?style=flat-square)](https://github.com/HaoyunT/embodied-daily/releases)
+[![Last commit](https://img.shields.io/github/last-commit/HaoyunT/embodied-daily?style=flat-square)](https://github.com/HaoyunT/embodied-daily/commits/main)
+[![GitHub stars](https://img.shields.io/github/stars/HaoyunT/embodied-daily?style=flat-square)](https://github.com/HaoyunT/embodied-daily/stargazers)
+
+**arXiv → Claude picks & explains the Top 10 → iPhone push · Mac digest · email · Markdown archive**
+
+[Example output](#-example-output) · [Quick start](#-quick-start) · [Run in the cloud](#%EF%B8%8F-run-in-the-cloud-github-actions) · [Configuration](#%EF%B8%8F-configuration)
+
+</div>
 
 ---
 
+Every morning at 09:30, embodied-daily pulls the newest **Embodied AI** papers from arXiv (VLA, robot manipulation, dexterous hands, humanoids, navigation, world models, sim-to-real, …). It asks Claude to pick the most important ones and writes a structured digest for each paper that places it in the context of prior work. The digest is delivered to your phone and desktop, and kept as a searchable Markdown archive. It runs unattended — on GitHub Actions (works even when your laptop is off) or locally via `launchd`.
+
 ## ✨ Features
 
-- 🔍 **Auto-fetch**: multi-query search on arXiv (`cs.RO`, embodied, VLA, robot manipulation, etc.), merged and deduplicated
-- 🧠 **AI-picked reviews** (PaperLocus style: literature positioning + separating paper claims from inference), using the **Anthropic API** in the cloud and the `claude` CLI locally (reuses your Claude subscription):
-  - Top 10 ranked by importance
-  - One-line highlight (TL;DR) + 🧭 literature positioning (built on A, changed B -> C)
-  - Detailed Chinese review (problem / method / novelty / results / value)
-  - Key points list + direction tags
-- 💻 **Code links**: auto-extract the GitHub repo from the abstract or Papers with Code, otherwise honestly mark 'none'
-- 📲 **Delivery to iPhone + Mac**: each of the **top 5** of the Top 10 gets its own detailed push to iPhone (Bark); Mac gets a summary notification and auto-opens the daily Markdown with **all 10** papers, full text archived locally too
-- ⏰ **Scheduled and unattended**: ☁️ GitHub Actions (runs even when the machine is off, recommended) or local `launchd`, runs daily at 9:30
-- 🛟 **Graceful degradation**: falls back to English abstracts + keyword tags when the `claude` CLI is unavailable
+| | |
+|---|---|
+| 🔍 **Multi-query fetching** | Merges and de-duplicates several arXiv queries (`cs.RO`, `embodied`, `vision-language-action`, `robot manipulation`, or your own). Only the newest announcement day is kept, and papers already covered in the last 7 days are skipped. |
+| 🧠 **AI curation** | Claude ranks the candidates by importance (biased towards your `interests`) and writes for each paper a **TL;DR**, a **🧭 literature position** ("builds on A, changes B → C"), a **detailed digest** (problem / method / novelty / results / limits), and **highlights**. Inferences are marked as such; nothing is invented beyond the abstract. |
+| 💻 **Code links** | Extracted from the abstract, with a Papers with Code fallback; shown as `N/A` when none exists. |
+| 📲 **Delivery** | One [Bark](https://github.com/Finb/Bark) push per paper (top 5) to iPhone; a macOS notification plus the full Top 10 digest opened on your Mac; optional email with an HTML attachment. |
+| 🗓️ **Weekend recap** | arXiv is quiet on weekends, so on Saturday and Sunday you get this week's papers that you haven't been sent yet. |
+| 🌐 **Any language** | Digests are written in English by default; set `language` to e.g. `Chinese` to get them in another language. |
+| 🛟 **Graceful fallback** | No API key and no `claude` CLI? You still get the Top N with raw abstracts and keyword tags. |
+| 🪶 **Zero dependencies** | A single Python file using only the standard library (+ system `curl`). |
 
-## 🚀 Install
+## 👀 Example output
+
+Each run writes `archive/YYYY-MM-DD.md` (and `latest.md`). An entry looks like this:
+
+> ## 1. [VLA] Cairn: Object-Centric 3D Trajectory Priors for Steering Frozen VLAs
+>
+> > 💡 Steers a frozen VLA with object-centric 3D trajectory priors so it copes with moved objects and obstacles without layout-specific fine-tuning.
+>
+> **🧭 Position**: Builds on pretrained vision-language-action controllers whose object destinations are tied to training layouts, and replaces per-layout fine-tuning, which needs fresh robot data and erodes existing skills, with inference-time steering from object-centric 3D trajectory priors while the VLA stays frozen.
+>
+> The problem is that VLAs act as capable low-level controllers yet bind where objects go to the layouts seen in training, so when objects are moved or obstacles block the path they carry objects to the wrong place or into collisions. Fine-tuning on each new layout is costly because it requires robot data per layout and causes the model to lose skills it already had. Cairn keeps the VLA weights frozen and steers its behavior using object-centric 3D trajectory priors … The value lies in training-free adaptation to rearranged scenes and new obstacles while preserving pretrained skills. Limitations likely include dependence on the quality of the 3D trajectory priors and on 3D perception.
+>
+> **Highlights**:
+> - VLA weights stay frozen; no per-layout robot data or fine-tuning
+> - Object-centric 3D trajectory priors redirect destinations and avoid obstacles
+> - Addresses skill erosion caused by fine-tuning on new layouts
+>
+> **Links**: 📄 [arXiv](https://arxiv.org/abs/2611.34914) · 📕 [PDF](https://arxiv.org/pdf/2611.34914v1) · 💻 Code: N/A
+
+On your phone, each of the top 5 papers arrives as its own Bark notification with the same TL;DR, digest, highlights and links.
+
+## 🔢 How papers are selected
+
+1. **Candidate pool (by date).** All queries are merged and de-duplicated. With `same_day_only` (default), only papers from the newest arXiv announcement day are kept; papers already archived in the last `dedup_days` days are dropped. The newest `max_candidates` (40) form the pool.
+2. **AI ranking (by importance + relevance).** Titles and abstracts are sent to Claude, which selects the `top_n` (10) most relevant and valuable papers, ranks them, and favours your `interests`.
+3. **Delivery.** The Mac digest and archive show all `top_n` papers; the phone receives the first `push_n` (5), with `push_priority` matches moved to the front.
+
+> [!NOTE]
+> Ranking is the model's judgement based on abstracts only, not on citations, authors or venues, so re-running the same day can change the order slightly. Steer it with `interests`, or edit the prompt in `build_curate_prompt()`.
+
+## 🚀 Quick start
 
 ```bash
-git clone <your-repo-url> embodied-daily
+git clone https://github.com/HaoyunT/embodied-daily.git
 cd embodied-daily
-cp config.example.json config.json   # then fill in your Bark key
-bash install.sh                        # install the skill + register the launchd job
+cp config.example.json config.json       # then fill in bark_key, interests, ...
+python3 embodied_daily.py --no-deliver   # fetch + curate + archive, no notifications
+cat latest.md
 ```
 
-### Configure Bark (iPhone push)
+Curation uses `ANTHROPIC_API_KEY` if it is set, otherwise the local [`claude` CLI](https://claude.com/claude-code) (your Claude login, no API key needed).
 
-1. Install the free **Bark** app from the iPhone App Store
-2. Open it and copy your push key (the **`XXXXXX`** part of the URL `https://api.day.app/`)
-3. Put it in `bark_key` in `config.json`
+| Command | What it does |
+|---|---|
+| `python3 embodied_daily.py` | Full run: fetch → curate → archive → push / notify / email |
+| `python3 embodied_daily.py --no-deliver` | Fetch → curate → archive only |
+| `python3 embodied_daily.py --push-only` | Re-deliver the last digest from `latest.json` without fetching |
 
-### Manual run / test
+### Scheduled run on macOS (`launchd`)
 
 ```bash
-python3 embodied_daily.py            # fetch + review + push + archive right away
-cat archive/$(date +%F).md           # view today's digest
+bash install.sh   # creates config.json if missing, installs the Claude Code skill, registers a 09:30 launchd job
 ```
 
-In Claude Code you can also type `/embodied-daily` to trigger it or debug by hand.
+The installer also installs a [Claude Code](https://claude.com/claude-code) skill, so you can type `/embodied-daily` in Claude Code to trigger or inspect a run. `launchd` only runs while the Mac is awake; a missed run executes after wake.
 
-## ☁️ Cloud run (GitHub Actions, recommended: no local machine needed, works even when the Mac is off)
+### iPhone push with Bark
 
-Local `launchd` only runs when the Mac is awake and not asleep. For **a reliable daily run at 9:30 that pushes even when the machine is off**, use the bundled GitHub Actions workflow (`.github/workflows/daily.yml`, already set to 9:30 Beijing time).
+1. Install the free **Bark** app from the App Store.
+2. Copy your device key — the `XXXXXX` part of `https://api.day.app/XXXXXX`.
+3. Put it in `config.json` as `bark_key` (or the `BARK_KEY` secret on GitHub Actions).
 
-The cloud has no local `claude` login, so it uses the **Anthropic API** to generate the Chinese summaries (pay per use, a few cents a day).
+## ☁️ Run in the cloud (GitHub Actions)
 
-**One-time setup (on your GitHub repository page):**
+The bundled workflow [`daily.yml`](.github/workflows/daily.yml) can run every day at 01:30 UTC (09:30 Beijing time) in **your fork**: it curates with the Anthropic API, pushes to your phone, and commits the day's archive back to your fork — no machine of yours needs to be on. Scheduled runs are **off by default**, so a fork never runs (or spends API credit) until you opt in.
 
-1. **Settings → Secrets and variables → Actions → New repository secret**, add two Secrets:
-   - `ANTHROPIC_API_KEY`: Anthropic API key (official [console.anthropic.com](https://console.anthropic.com), or a key from a third-party relay service; the latter requires setting `ANTHROPIC_BASE_URL` under Variables)
-   - `BARK_KEY`: your Bark push key
-2. (Optional) On the same page, under the **Variables** tab, add:
-   - `ANTHROPIC_BASE_URL`: **required if using a third-party relay API**, set it to the relay service address (e.g. `https://xxx.example.com`; not needed for the official API)
-   - `EMBODIED_INTERESTS`: interest preferences, e.g. `VLA, dexterous hands`
-   - `ANTHROPIC_MODEL`: model, defaults to `claude-sonnet-4-6`
-3. On the **Actions** page, find the 'Daily Embodied AI Digest' workflow and click **Run workflow** to run it manually once to verify.
+1. Fork this repository and enable Actions in the fork's **Actions** tab.
+2. **Settings → Secrets and variables → Actions → Secrets**, add:
 
-After that it runs automatically every day at 9:30 (UTC 1:30): fetch → API curation and summaries → push to iPhone → commit the archived digest of the day back to the repository.
+   | Secret | Required | Description |
+   |---|---|---|
+   | `ANTHROPIC_API_KEY` | ✅ for AI digests | Key from [console.anthropic.com](https://console.anthropic.com) (or from an API-compatible proxy, see `ANTHROPIC_BASE_URL`) |
+   | `BARK_KEY` | for iPhone push | Your Bark device key |
+   | `SMTP_PASSWORD` | for email | SMTP password / app password |
 
-> ⚠️ Scheduled triggers on GitHub Actions may be delayed by a few minutes to tens of minutes (a platform characteristic); this is normal.
+3. Optionally add **Variables**:
 
-## ⚙️ Configuration options (`config.json`)
+   | Variable | Description |
+   |---|---|
+   | `EMBODIED_INTERESTS` | e.g. `VLA, dexterous manipulation, world models` |
+   | `EMBODIED_PUSH_PRIORITY` | tag keyword to push first, e.g. `Dexterous` |
+   | `EMBODIED_LANGUAGE` | digest language, default `English` |
+   | `ANTHROPIC_MODEL` | default `claude-sonnet-4-6` |
+   | `ANTHROPIC_BASE_URL` | only for API-compatible proxies |
+   | `EMAIL_TO`, `EMAIL_FROM`, `SMTP_HOST` | email delivery |
 
-| Field | Description | Default |
-|---|---|---|
-| `bark_key` | Bark push key (required for iPhone push) | `""` |
-| `bark_server` | Bark server (change if self-hosted) | `https://api.day.app` |
-| `top_n` | Number of curated papers: the Mac digest / archive shows all `top_n` papers | `10` |
-| `push_n` | iPhone only receives the first `push_n` papers (≤ `top_n`) | `5` |
-| `interests` | **Personal interest preferences**: list the directions you care about; related papers are prioritized and ranked first (leave empty for no bias) | `""` |
-| `same_day_only` | **Same day only**: keep only papers from the most recent announcement date, never spanning multiple days (no backfilling from earlier days even if fewer than `top_n`) | `true` |
-| `lookback_days` | Takes effect when `same_day_only=false`: how many recent days to look back | `3` |
-| `max_candidates` | Max number of candidates sent to AI for curation (i.e. the "denominator") | `40` |
-| `queries` | Array of arXiv search queries | See file |
-| `use_claude_cli` | Whether to enable AI summaries (cloud uses the Anthropic API, local uses the `claude` CLI) | `true` |
-| `api_model` | Model used by the cloud Anthropic API (can be overridden by the `ANTHROPIC_MODEL` environment variable) | `claude-sonnet-4-6` |
-| `api_base_url` | API address (set to the relay address for third-party relays; can be overridden by the `ANTHROPIC_BASE_URL` environment variable) | `https://api.anthropic.com` |
-| `claude_bin` | Path to the claude executable (auto-detected if empty) | `""` |
-| `open_digest` | Whether to automatically open the daily digest `latest.md` with the default app after running (Mac) | `true` |
+4. Open **Actions → Embodied AI Daily → Run workflow** once to verify.
+5. To run it every day, add the repository variable **`ENABLE_DAILY_DIGEST`** = `true`. Edit the `cron` line in `daily.yml` for a different time.
 
-> 💡 **Personalization example**: set `interests` to `"VLA, dexterous hand manipulation, world models"` and the daily Top10 will lean toward these directions.
+> [!TIP]
+> Without `ANTHROPIC_API_KEY` the workflow still succeeds but falls back to raw abstracts — look for `WARNING: AI curation unavailable` in the log. Scheduled GitHub Actions runs can be delayed by several minutes.
 
-## 🔢 How the Top10 is selected & ranked (iPhone gets the first 5)
+## ⚙️ Configuration
 
-Two steps:
+All options live in `config.json` (see [`config.example.json`](config.example.json)); environment variables override them.
 
-**Step 1 · Define the candidate pool (the "denominator", by time only)**
-Fetch results from multiple arXiv searches (`cs.RO` / embodied / VLA / robot manipulation), merge and dedupe. Default `same_day_only=true`, **keep only papers from the latest announcement day** (no multi-day span), sort by submission time descending, and take the first `max_candidates` (default **40**) as candidates.
-→ So the denominator = the **same-day batch** of embodied papers (that is the `same-day batch: <date> count: N` line in the run log). If `same_day_only` is off, it falls back to looking back `lookback_days` days.
+| Key | Env override | Description | Default |
+|---|---|---|---|
+| `bark_key` | `BARK_KEY` | Bark device key; empty disables iPhone push | `""` |
+| `bark_server` | `BARK_SERVER` | Bark server (change if self-hosted) | `https://api.day.app` |
+| `top_n` | | Papers selected per day (all shown in the digest) | `10` |
+| `push_n` | | Papers pushed to the phone (≤ `top_n`) | `5` |
+| `push_priority` | `EMBODIED_PUSH_PRIORITY` | Phone push: papers whose tag contains this go first | `""` |
+| `interests` | `EMBODIED_INTERESTS` | Your research interests, highest priority first | `""` |
+| `language` | `EMBODIED_LANGUAGE` | Language of the generated digest | `English` |
+| `same_day_only` | | Only the newest arXiv announcement day | `true` |
+| `dedup_days` | | Skip papers archived in the last N days (0 = off) | `7` |
+| `lookback_days` | | Days to look back when `same_day_only` is `false` | `3` |
+| `max_candidates` | | Candidate pool size sent to the model | `40` |
+| `queries` | | arXiv `search_query` strings | see file |
+| `use_claude_cli` | | Enable AI curation (API first, then CLI) | `true` |
+| `api_model` | `ANTHROPIC_MODEL` | Anthropic model | `claude-sonnet-4-6` |
+| `api_base_url` | `ANTHROPIC_BASE_URL` | API base URL | `https://api.anthropic.com` |
+| `api_retries` | | Retries on API failure | `3` |
+| `claude_bin` | | Path to the `claude` CLI (empty = auto-detect) | `""` |
+| `open_digest` | | macOS: open `latest.md` after a run | `true` |
+| `email_to` | `EMAIL_TO` | Comma-separated recipients; empty disables email | `""` |
+| `email_from` | `EMAIL_FROM` | Sender / SMTP account | `""` |
+| `smtp_host` | `SMTP_HOST` | SMTP server | `""` |
+| `smtp_port` | | `465` (SSL) or `587` (STARTTLS) | `465` |
+| `smtp_password` | `SMTP_PASSWORD` | Prefer the env var over the file | `""` |
+| `smtp_use_ssl` | | `true` = SSL, `false` = STARTTLS | `true` |
 
-**Step 2 · AI curation + ranking (by "importance + relevance")**
-Send this batch of candidates' **titles + abstracts** to `claude` in one go, and have it:
-1. Pick the `top_n` (default **10**) papers most relevant and valuable to Embodied AI;
-2. **Sort by importance, high to low**;
-3. If `interests` is configured, **papers relevant to your interests are picked first and ranked higher**.
-
-Final: **the Mac digest / archive shows all `top_n` (10) papers**, while **iPhone only pushes the top `push_n` (5)**.
-
-> ⚠️ **Note**: the ranking is a **subjective judgment** by `claude` based on the abstracts, not on hard metrics such as citation count, authors, or institutions. It therefore carries model subjectivity, and rerunning on the same day may slightly change the order. For more control, steer it with `interests` in `config.json`, or edit the prompt of `claude_curate()` in the script yourself.
+`config.json` is git-ignored — keep your keys there or in environment variables, never in tracked files.
 
 ## 🧱 How it works
 
-```
-arXiv API ──▶ merge/dedupe/filter by date ──▶ claude CLI curates Top10 + Chinese commentary
-                                            │
-              ┌─────────────────────────────┼──────────────────────┐
-              ▼                             ▼                       ▼
-   Bark → iPhone(one detailed item per paper)        Mac desktop summary notification          Markdown archive
+```text
+arXiv API (several queries)
+        │  merge · de-dup · newest day · skip recently covered
+        ▼
+Claude (Anthropic API or local claude CLI)
+        │  rank Top N · TL;DR · literature position · digest · highlights
+        ▼
+Markdown digest ──┬──▶ archive/DATE.md          (committed to your fork by Actions)
+                  ├──▶ latest.md / latest.json  (reused by --push-only)
+                  ├──▶ Bark → iPhone            (one push per paper, top push_n)
+                  ├──▶ macOS notification       (+ opens the full digest)
+                  └──▶ Email                    (HTML attachment, optional)
 ```
 
-## 📁 Directory structure
+## 📁 Repository layout
 
-```
+```text
 embodied-daily/
-├── embodied_daily.py          # main script (only needs the Python stdlib + system curl)
-├── config.example.json        # config template
-├── config.json                # your config (includes Bark key, already gitignored)
-├── install.sh                 # One-click install: installs skill + registers launchd
-├── skill/SKILL.md             # Claude Code skill source file
-├── launchd/                   # launchd scheduled task templates
-├── archive/                   # daily digest archive (Markdown)
-└── logs/                      # run logs (gitignored)
+├── embodied_daily.py          # the whole tool (stdlib only)
+├── config.example.json        # configuration template → copy to config.json
+├── install.sh                 # macOS: install Claude Code skill + launchd job
+├── launchd/                   # launchd plist template
+├── skill/SKILL.md             # Claude Code skill (/embodied-daily)
+├── tests/                     # offline unit tests
+├── archive/                   # your daily digests (Markdown, written at run time)
+└── .github/workflows/         # daily.yml (digest) · ci.yml (tests)
 ```
 
-## 📋 Dependencies
+## 📋 Requirements
 
-- macOS (uses `launchd` for scheduling and `osascript` for desktop notifications)
-- Python 3 (the built-in `/usr/bin/python3` is enough)
-- System `curl`
-- Optional: [`claude` CLI](https://claude.com/claude-code) (for high-quality Chinese summaries)
+- Python 3.9+ (the macOS system `/usr/bin/python3` works), standard library only
+- `curl` (for Bark)
+- For AI digests: an `ANTHROPIC_API_KEY`, or the [`claude` CLI](https://claude.com/claude-code)
+- macOS only for `launchd`, desktop notifications and auto-open; everything else runs on any OS
+
+## 🤝 Contributing
+
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Run the tests with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## 📝 License
 
-MIT
+[MIT](LICENSE). Paper titles, abstracts and links belong to their authors and arXiv. Generated digests are AI-written summaries and may contain mistakes — always check the original paper.

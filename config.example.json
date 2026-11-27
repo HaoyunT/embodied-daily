@@ -1,11 +1,13 @@
 {
-  "bark_key": "put your Bark key here (get it after installing the Bark App on iPhone; it is the part after api.day.app/ in the URL)",
+  "bark_key": "",
   "bark_server": "https://api.day.app",
   "top_n": 10,
   "push_n": 5,
   "push_priority": "",
-  "interests": "(optional) fill in the directions you care about; related papers get priority and come first, e.g.: VLA, dexterous hand manipulation, world models",
+  "interests": "",
+  "language": "English",
   "same_day_only": true,
+  "dedup_days": 7,
   "lookback_days": 3,
   "max_candidates": 40,
   "queries": [
@@ -17,6 +19,13 @@
   "use_claude_cli": true,
   "api_model": "claude-sonnet-4-6",
   "api_base_url": "https://api.anthropic.com",
+  "api_retries": 3,
   "claude_bin": "",
-  "open_digest": true
+  "open_digest": true,
+  "email_to": "",
+  "email_from": "",
+  "smtp_host": "",
+  "smtp_port": 465,
+  "smtp_password": "",
+  "smtp_use_ssl": true
 }

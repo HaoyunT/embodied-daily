@@ -1,14 +1,18 @@
-# Personal config and secrets (contains the Bark key, never commit)
+# Personal config and secrets (contains your Bark key / SMTP password) — never commit
 config.json
+.env
 
-# Run artifacts
+# Run outputs
 logs/
 latest.md
+latest.json
+archive/*.json
+archive/*.html
 
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # macOS
 .DS_Store
-latest.json

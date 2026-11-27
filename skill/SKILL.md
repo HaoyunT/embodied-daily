@@ -1,48 +1,49 @@
 ---
 name: embodied-daily
-description: Generate/view today's Embodied AI paper digest -- fetch the latest embodied-AI papers from arXiv, with Chinese summaries, arXiv links, code repositories, and direction tags, Top5. Can be run manually; each paper's detailed analysis is pushed separately to iPhone (Bark), plus a summary notification on Mac. Use when the user says "daily embodied digest", "today's embodied papers", or "embodied daily".
+description: Generate or view today's Embodied AI paper digest — fetches the latest embodied-AI papers from arXiv and gives a ranked Top-N with digests, arXiv links, code links and topic tags; pushes to iPhone (Bark) and shows a macOS notification. Use when the user asks for "embodied daily", "today's embodied AI papers", or the embodied paper digest.
 ---
 
-# Embodied AI Daily Digest (embodied-daily)
+# Embodied AI Daily (embodied-daily)
 
-At 9:30 every day launchd automatically runs `~/embodied-daily/embodied_daily.py`, **pushing a separate detailed write-up for each of the Top5 papers to the iPhone (Bark)**, showing **one summary notification on the Mac**, and archiving it as Markdown. This skill is for **manual triggering** or **viewing and adjusting**.
+A launchd job runs `__REPO__/embodied_daily.py` every day at 09:30. It pushes the top papers to iPhone (one Bark notification per paper), shows a macOS summary notification, and archives the digest as Markdown. Use this skill to **trigger a run manually** or to **inspect / adjust** the setup.
 
-## User intents and matching actions
+## User intents and actions
 
-### 1. Generate today's digest now (manually trigger the whole pipeline)
-Run the script; it fetches from arXiv → claude Chinese summaries → one Bark push per paper + one Mac summary notification → archive:
+### 1. Generate today's digest now (full pipeline)
 ```bash
-/usr/bin/python3 ~/embodied-daily/embodied_daily.py
+python3 __REPO__/embodied_daily.py              # fetch → curate → push → archive
+python3 __REPO__/embodied_daily.py --no-deliver # fetch → curate → archive only (no push)
 ```
-After it finishes, read `~/embodied-daily/latest.md` and also show its content to the user in the conversation.
+Afterwards, read `__REPO__/latest.md` and show its content to the user.
 
-### 2. View the latest digest or one from a specific day (without re-fetching)
+### 2. View a past digest (no new fetch)
 ```bash
-cat ~/embodied-daily/latest.md            # most recent
-ls ~/embodied-daily/archive/              # all archives
-cat ~/embodied-daily/archive/2026-06-10.md
+cat __REPO__/latest.md          # most recent run
+ls __REPO__/archive/            # all archived days
+cat __REPO__/archive/YYYY-MM-DD.md
 ```
-After reading, format the content and show it to the user.
 
-### 3. View in the session only, no push
-Use the fetch logic in the script for a one-off survey: use WebFetch to pull
+### 3. One-off look in the conversation, without pushing
+Fetch
 `https://export.arxiv.org/api/query?search_query=cat:cs.RO+OR+all:embodied&sortBy=submittedDate&sortOrder=descending&max_results=30`
-Then pick the Top 5 embodied-AI papers and give a Chinese summary + arXiv link + code link (search the summary for github, mark "none" if absent) + topic tag.
+with WebFetch, then pick the top embodied-AI papers and give a digest, arXiv link, code link (a GitHub URL from the abstract, otherwise "N/A") and topic tag for each.
 
-### 4. Adjust configuration
-Edit `~/embodied-daily/config.json`:
-- `bark_key`: iPhone Bark push key (**required on first use**)
-- `interests`: personal interest preferences (e.g. "VLA, dexterous hands"); matching papers are picked first and ranked higher
-- `top_n`: number of papers per day (default 5)
-- `lookback_days`: how many recent days to fetch (default 3)
-- `queries`: array of arXiv search queries
-- `use_claude_cli`: whether to use the local claude CLI to generate Chinese summaries (default true)
+### 4. Change configuration
+Edit `__REPO__/config.json`:
+- `bark_key`: Bark device key for iPhone push (**required for push**)
+- `interests`: research interests, highest priority first (e.g. "VLA, dexterous hands")
+- `language`: digest language (default "English")
+- `top_n` / `push_n`: papers in the digest / pushed to the phone (default 10 / 5)
+- `queries`: arXiv search queries
+- `use_claude_cli`: enable AI curation (default true)
 
-### 5. Troubleshoot the scheduled task
+See the repo README for the full list.
+
+### 5. Troubleshoot the scheduled job
 ```bash
 launchctl print gui/$(id -u)/com.embodied.daily | grep -E "state|last exit"
-cat ~/embodied-daily/logs/stdout.log
-cat ~/embodied-daily/logs/stderr.log
+cat __REPO__/logs/stdout.log
+cat __REPO__/logs/stderr.log
 ```
 Reload:
 ```bash
@@ -51,6 +52,6 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.embodied.daily.plist
 ```
 
 ## Notes
-- Chinese summaries reuse the local `claude` CLI (your Claude subscription), so no separate API key is needed; if the CLI is unavailable it falls back to an English summary + keyword tags.
-- arXiv may not update on weekends/holidays, so `lookback_days` defaults to a 3-day lookback as a fallback.
-- launchd jobs only take effect when the Mac is on; if the lid is closed and it sleeps, missed tasks for that day run after wake.
+- Locally, curation uses the `claude` CLI (your Claude login), so no API key is needed. If neither `ANTHROPIC_API_KEY` nor the CLI is available, it falls back to raw abstracts + keyword tags.
+- arXiv does not announce on weekends; on Saturday/Sunday the script sends a recap of this week's papers that were not pushed yet.
+- launchd only runs while the Mac is awake; a missed run is executed after wake.
