@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest an idea, e.g. a new delivery channel or paper source
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the feature and the problem it solves.
+    validations:
+      required: true
